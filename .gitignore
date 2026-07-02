@@ -1,0 +1,48 @@
+# ---- Data (large local files, never committed) ----
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+*.parquet
+*.csv
+*.csv.zip
+*.zip
+
+# ---- Kaggle credentials (never commit secrets) ----
+kaggle.json
+.kaggle/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ---- Virtual environments ----
+.venv/
+venv/
+env/
+ENV/
+
+# ---- Testing / coverage ----
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ---- Notebooks ----
+.ipynb_checkpoints/
+
+# ---- IDEs / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- EDA output images (regenerated, keep repo light) ----
+reports/figures/*.png
