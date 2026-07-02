@@ -104,7 +104,10 @@ python -m src.feature_engineering
 # Phase 2.5 — UID pseudo-identity aggregation  (extends features.parquet in place)
 python -m src.uid_features
 
-# Guardrail tests (temporal split + feature-engineering + UID leakage)
+# Phase 3 — adversarial validation + frozen feature manifest  (train+val only)
+python -m src.adversarial_validation
+
+# Guardrail tests (temporal split + feature-engineering + UID + adversarial leakage)
 pytest -q
 ```
 
@@ -116,6 +119,11 @@ pytest -q
 | `split_indices.parquet` | `TransactionID`, `TransactionDT`, `split` (`train`/`val`/`test`) |
 | `split_boundaries.json` | Auditable cut points in raw seconds + relative days (assumed calendar dates labelled as such) |
 | `features.parquet` | Model-ready feature set (encoded categoricals, temporal-safe aggregates, missingness signals, and Phase 2.5 UID pseudo-identity aggregates), with the Phase 1 `split` preserved |
+| `adversarial_validation_report.json` | Per-feature adversarial AUC, flags, and overall/residual separability (Phase 3) |
+| `feature_manifest.json` | Frozen list of allowed modeling columns Phase 4 must use verbatim (Phase 3) |
+
+The pre-registered Phase 4 evaluation protocol lives in
+`docs/phase4_evaluation_protocol.md`.
 
 `src/data_prep.py` also **logs the split boundaries** at runtime so the split is
 auditable without opening any file.
@@ -196,6 +204,32 @@ auditable without opening any file.
   point-in-time (as-of) joins. Building it explicitly here means the offline
   training features would match an online serving path without train/serve skew —
   the same property those systems provide, implemented from first principles.
+- **Adversarial validation drops individually-drifting features, then freezes the
+  set (Phase 3).** A classifier is trained to tell train rows from val rows (label
+  0/1); a feature that *individually* separates them (univariate AUC > 0.70, a
+  top-solution convention for this competition) is drifting hard enough that a
+  fraud model could latch onto a train-only artifact. Those are dropped and the
+  survivors frozen into `feature_manifest.json`, which Phase 4 loads verbatim — no
+  ad hoc selection later. Two honest points: (1) `TransactionDay` (a Phase 2
+  feature = `TransactionDT // 86400`) is a coarse copy of the temporal index, so
+  it is excluded as a *candidate* by the same rule the spec applies to
+  `TransactionDT`, not "discovered" as drift — otherwise it trivially drives the
+  overall AUC to 1.0. (2) Even after dropping the flagged features, the modeling
+  set's **combined** adversarial AUC stays ~0.9995: history-accumulation features
+  (uid/card prior counts) inherently encode time on a temporal split, so
+  train/val remain almost perfectly separable *by construction*. This is expected,
+  not a bug — per-feature flagging removes the worst individual offenders; it
+  cannot erase inherent temporal separability, which is precisely why evaluation
+  uses a temporal val split (Phase 4) and drift is simulated explicitly (Phase 6).
+  The two flagged-and-dropped features (`P_emaildomain_prior_count` 0.76,
+  `D1_normalized` 0.72) were marginally over threshold; the central UID aggregates
+  and raw `D1` are **not** flagged and survive.
+- **Pre-registered evaluation protocol (`docs/phase4_evaluation_protocol.md`).**
+  Written and committed in Phase 3, before any Phase 4 model exists: primary
+  metric (validation PR-AUC), the family-progression-then-imbalance-bake-off
+  design, and the exact winner + tie-break rule are fixed *before* results, so the
+  comparison can't quietly become "whichever number looked best afterward." Same
+  discipline as the split-boundary guardrail, applied to modeling.
 
 ---
 
@@ -203,11 +237,12 @@ auditable without opening any file.
 
 1. **Phase 1 — Data acquisition, merge & temporal split** ✅
 2. **Phase 2 — Feature engineering & encoding** ✅
-   *(incl. Phase 2.5 — UID pseudo-identity aggregation)* ✅ *(current)*
-3. Phase 3 — Baseline modeling
-4. Phase 4 — Model tuning & evaluation
-5. Phase 5 — Drift simulation & monitoring
-6. Phase 6 — Serving / deployment
+   *(incl. Phase 2.5 — UID pseudo-identity aggregation)* ✅
+3. **Phase 3 — Adversarial validation & pre-registered Phase 4 protocol** ✅ *(current)*
+4. Phase 4 — Baseline modeling & imbalance bake-off *(protocol pre-registered in `docs/`)*
+5. Phase 5 — Model tuning & evaluation
+6. Phase 6 — Drift simulation & monitoring
+7. Phase 7 — Serving / deployment
 
 > **TransactionDT note (important):** `TransactionDT` is a time delta in
 > **seconds from a reference datetime that IEEE-CIS deliberately does not
