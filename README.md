@@ -167,6 +167,11 @@ auditable without opening any file.
   any lift would be confounded with the modeling change under test — you could no
   longer attribute an improvement to the technique rather than the feature set
   shifting underneath it.
+  *Known bounded limitation:* `D1` is null for ~0.2% of rows, so those rows share
+  a `__missing__` component in the key and a few distinct clients can blend into
+  one pseudo-identity. The failure mode is *dilution* (a softer aggregate), not
+  leakage or corruption, and it is bounded to that thin slice — documented and
+  left as-is rather than rebuilt.
 - **UID aggregates are full-dataset, categorical encoders are train-only — and
   that is not a contradiction.** These look opposite but answer different
   questions. An *encoder learns a parameter* (a category's frequency/code) from
@@ -182,6 +187,15 @@ auditable without opening any file.
   with < 2 prior transactions, so it is set to the `-999` sentinel (with
   `uid_prior_count` flagging history depth) rather than a misleading `0` — the
   model can then separate "genuinely low variance" from "not enough history".
+- **Point-in-time correctness (the systems framing).** The causal-window
+  discipline enforced by hand throughout this project — every aggregate reads
+  only strictly-earlier rows, and the split cuts strictly on time — *is*
+  **point-in-time correctness**: the guarantee that a feature's value for a row
+  reflects only what was knowable at that row's timestamp. This is exactly what
+  production feature stores (Feast, Tecton) exist to enforce at scale via
+  point-in-time (as-of) joins. Building it explicitly here means the offline
+  training features would match an online serving path without train/serve skew —
+  the same property those systems provide, implemented from first principles.
 
 ---
 
