@@ -1,0 +1,6 @@
+pandas
+pyarrow
+matplotlib
+seaborn
+pytest
+kaggle
