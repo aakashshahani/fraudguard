@@ -206,3 +206,93 @@ def test_label_encoding_is_fit_on_train_only():
     # Unseen category encodes to the designated unknown value (-1).
     assert encoded.iloc[3] == UNKNOWN_LABEL
     assert (encoded.iloc[[0, 1, 2, 4]] >= 0).all()
+
+
+# =========================================================================== #
+# Phase 2.5 — UID aggregation leakage guardrails
+#
+# The uid_* expanding stats must be causal: each row summarises only STRICTLY
+# earlier same-uid rows, never its own amount, never a future row, and never
+# reset at a split boundary. Insufficient history must be flagged, not faked.
+# =========================================================================== #
+
+from src.uid_features import (  # noqa: E402
+    UID_SENTINEL,
+    compute_uid_features,
+)
+
+
+def test_uid_expanding_stats_exclude_the_current_rows_own_amount():
+    """
+    Three transactions for one uid. At the last row, including its own amount
+    (30) would change the mean from 15 -> 20; assert it stays 15.
+    """
+    df = pd.DataFrame(
+        {
+            "TransactionID": [1, 2, 3],
+            "TransactionDT": [1, 2, 3],
+            "TransactionAmt": [10.0, 20.0, 30.0],
+            "uid": ["u", "u", "u"],
+        }
+    )
+    out = compute_uid_features(df)
+
+    assert out["uid_prior_count"].tolist() == [0, 1, 2]
+    # priors of row 3 are [10, 20] -> mean 15, NOT 20 (which includes current).
+    assert out["uid_amt_expanding_mean"].iloc[2] == pytest.approx(15.0)
+    assert out["uid_amt_expanding_mean"].iloc[2] != pytest.approx(20.0)
+    # sample std of [10, 20] excludes the current 30.
+    assert out["uid_amt_expanding_std"].iloc[2] == pytest.approx(
+        pd.Series([10.0, 20.0]).std(), rel=1e-4
+    )
+
+
+def test_uid_features_span_split_boundary_without_reset():
+    """
+    Same uid across train/val/test. The stats must accumulate across the
+    boundary — a test-split row must see all earlier train+val rows, proving
+    the aggregate is computed over the full timeline, not refit per split.
+    """
+    df = pd.DataFrame(
+        {
+            "TransactionID": [1, 2, 3, 4],
+            "TransactionDT": [10, 20, 30, 40],
+            "TransactionAmt": [5.0, 7.0, 9.0, 11.0],
+            "uid": ["u", "u", "u", "u"],
+            "split": ["train", "train", "val", "test"],
+        }
+    )
+    out = compute_uid_features(df)
+
+    # val row sees 2 train priors; test row sees all 3 (train + val).
+    assert out["uid_prior_count"].iloc[2] == 2
+    assert out["uid_prior_count"].iloc[3] == 3
+    assert out["uid_amt_expanding_mean"].iloc[3] == pytest.approx((5 + 7 + 9) / 3)
+
+
+def test_uid_insufficient_history_produces_sentinel_not_zero_or_nan():
+    """
+    0 priors  -> mean & std sentinel.
+    1 prior   -> mean is real, std sentinel (std undefined for n < 2).
+    2+ priors -> std is a real value, never the sentinel.
+    """
+    df = pd.DataFrame(
+        {
+            "TransactionID": [1, 2, 3],
+            "TransactionDT": [1, 2, 3],
+            "TransactionAmt": [10.0, 20.0, 30.0],
+            "uid": ["u", "u", "u"],
+        }
+    )
+    out = compute_uid_features(df)
+
+    # 0 priors
+    assert out["uid_amt_expanding_mean"].iloc[0] == UID_SENTINEL
+    assert out["uid_amt_expanding_std"].iloc[0] == UID_SENTINEL
+    # 1 prior -> mean real (10), std still sentinel
+    assert out["uid_amt_expanding_mean"].iloc[1] == pytest.approx(10.0)
+    assert out["uid_amt_expanding_std"].iloc[1] == UID_SENTINEL
+    # 2 priors -> std is real, not the sentinel, and no unflagged NaN anywhere
+    assert out["uid_amt_expanding_std"].iloc[2] != UID_SENTINEL
+    assert not out["uid_amt_expanding_std"].isna().any()
+    assert not out["uid_amt_expanding_mean"].isna().any()
