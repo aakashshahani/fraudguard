@@ -101,7 +101,10 @@ python -m src.eda
 # Phase 2 — feature engineering  (reads Phase 1 artifacts, writes features.parquet)
 python -m src.feature_engineering
 
-# Guardrail tests (temporal split + feature-engineering leakage)
+# Phase 2.5 — UID pseudo-identity aggregation  (extends features.parquet in place)
+python -m src.uid_features
+
+# Guardrail tests (temporal split + feature-engineering + UID leakage)
 pytest -q
 ```
 
@@ -112,7 +115,7 @@ pytest -q
 | `train_merged.parquet` | Transaction ⨝ identity, dtype-downcast |
 | `split_indices.parquet` | `TransactionID`, `TransactionDT`, `split` (`train`/`val`/`test`) |
 | `split_boundaries.json` | Auditable cut points in raw seconds + relative days (assumed calendar dates labelled as such) |
-| `features.parquet` | Phase 2 model-ready feature set (encoded categoricals, temporal-safe aggregates, missingness signals), with the Phase 1 `split` preserved |
+| `features.parquet` | Model-ready feature set (encoded categoricals, temporal-safe aggregates, missingness signals, and Phase 2.5 UID pseudo-identity aggregates), with the Phase 1 `split` preserved |
 
 `src/data_prep.py` also **logs the split boundaries** at runtime so the split is
 auditable without opening any file.
@@ -154,13 +157,39 @@ auditable without opening any file.
   be optimistic. A test asserts a val/test-only category never appears in the
   fitted train map (confirmed on real data: e.g. new `id_30`/`id_31` device
   strings correctly encode to `-1`).
+- **UID aggregation before modeling, not after (Phase 2.5) — a sequencing
+  decision.** `card1 + addr1 + D1_normalized` reconstructs a persistent
+  pseudo-client identity (a documented top-solution technique for this dataset),
+  and per-client history is the strongest signal in IEEE-CIS. It is built *now*,
+  as part of feature engineering, specifically so Phase 3's imbalance-handling
+  comparison (class weights vs. resampling vs. …) runs against **one complete,
+  frozen feature set**. If the UID features were added after a baseline existed,
+  any lift would be confounded with the modeling change under test — you could no
+  longer attribute an improvement to the technique rather than the feature set
+  shifting underneath it.
+- **UID aggregates are full-dataset, categorical encoders are train-only — and
+  that is not a contradiction.** These look opposite but answer different
+  questions. An *encoder learns a parameter* (a category's frequency/code) from
+  data; if it sees val/test while fitting, held-out distribution bleeds into the
+  model — so it is fit on train only. An *expanding aggregate is a causal lookup*
+  that reads only strictly-earlier rows; a validation row summarising earlier
+  training rows is exactly the past→future direction that occurs at inference
+  time, so it leaks nothing regardless of where the split boundary falls.
+  Therefore `uid_prior_count` / `uid_amt_expanding_mean` / `uid_amt_expanding_std`
+  are computed over the full time-ordered dataset, each excluding the current
+  row (and tied timestamps). Rule of thumb: **fit parameters on train; window
+  causally over everything.** The std of a client's prior amounts is undefined
+  with < 2 prior transactions, so it is set to the `-999` sentinel (with
+  `uid_prior_count` flagging history depth) rather than a misleading `0` — the
+  model can then separate "genuinely low variance" from "not enough history".
 
 ---
 
 ## Roadmap
 
 1. **Phase 1 — Data acquisition, merge & temporal split** ✅
-2. **Phase 2 — Feature engineering & encoding** ✅ *(current)*
+2. **Phase 2 — Feature engineering & encoding** ✅
+   *(incl. Phase 2.5 — UID pseudo-identity aggregation)* ✅ *(current)*
 3. Phase 3 — Baseline modeling
 4. Phase 4 — Model tuning & evaluation
 5. Phase 5 — Drift simulation & monitoring
