@@ -89,16 +89,19 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## Run Phase 1
+## Run
 
 ```bash
-# 1. Merge + downcast + temporal split  (writes to data/processed/)
+# Phase 1 — merge + downcast + temporal split  (writes to data/processed/)
 python -m src.data_prep
 
-# 2. EDA figures  (writes to reports/figures/)
+# Phase 1 — EDA figures  (writes to reports/figures/)
 python -m src.eda
 
-# 3. Guardrail tests
+# Phase 2 — feature engineering  (reads Phase 1 artifacts, writes features.parquet)
+python -m src.feature_engineering
+
+# Guardrail tests (temporal split + feature-engineering leakage)
 pytest -q
 ```
 
@@ -109,6 +112,7 @@ pytest -q
 | `train_merged.parquet` | Transaction ⨝ identity, dtype-downcast |
 | `split_indices.parquet` | `TransactionID`, `TransactionDT`, `split` (`train`/`val`/`test`) |
 | `split_boundaries.json` | Auditable cut points in raw seconds + relative days (assumed calendar dates labelled as such) |
+| `features.parquet` | Phase 2 model-ready feature set (encoded categoricals, temporal-safe aggregates, missingness signals), with the Phase 1 `split` preserved |
 
 `src/data_prep.py` also **logs the split boundaries** at runtime so the split is
 auditable without opening any file.
@@ -131,13 +135,32 @@ auditable without opening any file.
   until final evaluation.
 - **Dtype downcasting.** float64→float32 and int64→int32 (where the range fits,
   via `pd.to_numeric(downcast=...)`) roughly halves the memory footprint.
+- **Expanding counts, not global counts (Phase 2) — necessary, not optional.**
+  Aggregate features like "how many times has this card been seen?" are only
+  legitimate if computed *causally*: row N may count prior rows but never later
+  ones. A naive `groupby.transform("count")` over the whole dataset leaks the
+  future into every past row — the model would train on a count that, at
+  inference time, doesn't yet exist. `expanding_prior_count` uses
+  `rank(method="min") - 1` on `TransactionDT` within each key, giving the number
+  of **strictly earlier** occurrences (ties don't count each other), independent
+  of row order. A handcrafted test asserts the count matches hand-calculation
+  and is unchanged under shuffling.
+- **Encoders fit on train only (Phase 2) — necessary, not optional.**
+  Frequency/label encoders are fit *strictly on the train split* and then applied
+  to val/test; a category unseen in train maps to a designated unknown value
+  (frequency → `0`, label → `-1`). Fitting the encoder on the full dataset would
+  bleed val/test distribution into training — the frequency of a category would
+  reflect rows the model shouldn't have seen, and threshold tuning on val would
+  be optimistic. A test asserts a val/test-only category never appears in the
+  fitted train map (confirmed on real data: e.g. new `id_30`/`id_31` device
+  strings correctly encode to `-1`).
 
 ---
 
 ## Roadmap
 
-1. **Phase 1 — Data acquisition, merge & temporal split** ✅ *(this repo)*
-2. Phase 2 — Feature engineering & encoding
+1. **Phase 1 — Data acquisition, merge & temporal split** ✅
+2. **Phase 2 — Feature engineering & encoding** ✅ *(current)*
 3. Phase 3 — Baseline modeling
 4. Phase 4 — Model tuning & evaluation
 5. Phase 5 — Drift simulation & monitoring
