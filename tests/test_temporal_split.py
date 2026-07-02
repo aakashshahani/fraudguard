@@ -296,3 +296,57 @@ def test_uid_insufficient_history_produces_sentinel_not_zero_or_nan():
     assert out["uid_amt_expanding_std"].iloc[2] != UID_SENTINEL
     assert not out["uid_amt_expanding_std"].isna().any()
     assert not out["uid_amt_expanding_mean"].isna().any()
+
+
+# =========================================================================== #
+# Phase 3 — adversarial validation must NEVER touch the test split
+#
+# The whole phase is train-vs-val; if test rows ever leak into the adversarial
+# input, the feature manifest (and every Phase 4 decision built on it) is
+# contaminated. This must fail loudly.
+# =========================================================================== #
+
+import json  # noqa: E402
+
+from src.adversarial_validation import (  # noqa: E402
+    candidate_features,
+    load_train_val,
+)
+from src.data_prep import SPLIT_BOUNDARIES_JSON  # noqa: E402
+from src.feature_engineering import FEATURES_PARQUET  # noqa: E402
+
+
+def test_candidate_features_exclude_temporal_index_and_identifiers():
+    """TransactionDT/Day/ID, the split label, and the target are never candidates."""
+    df = pd.DataFrame(
+        columns=[
+            "TransactionID", "TransactionDT", "TransactionDay", "split", "isFraud",
+            "card1_prior_count", "uid_prior_count", "V1",
+        ]
+    )
+    cands = candidate_features(df)
+    for banned in ["TransactionID", "TransactionDT", "TransactionDay", "split", "isFraud"]:
+        assert banned not in cands
+    for kept in ["card1_prior_count", "uid_prior_count", "V1"]:
+        assert kept in cands
+
+
+@pytest.mark.skipif(
+    not (FEATURES_PARQUET.exists() and SPLIT_BOUNDARIES_JSON.exists()),
+    reason="features.parquet / split_boundaries.json not built yet",
+)
+def test_adversarial_input_is_exactly_train_plus_val_never_test():
+    """
+    The adversarial input row count must equal train + val, and must NOT equal
+    train + val + test. Uses the split *counts* from split_boundaries.json (an
+    integer, not the test rows themselves) to prove the exclusion without ever
+    loading a test-split row.
+    """
+    b = json.loads(SPLIT_BOUNDARIES_JSON.read_text())
+    train_n, val_n, test_n = b["train"]["n"], b["val"]["n"], b["test"]["n"]
+
+    adv = load_train_val(columns=["split"])
+
+    assert len(adv) == train_n + val_n
+    assert len(adv) != train_n + val_n + test_n
+    assert set(adv["split"].unique()) == {"train", "val"}  # no 'test' anywhere
