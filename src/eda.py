@@ -32,7 +32,8 @@ from src.data_prep import (
     MERGED_PARQUET,
     PROJECT_ROOT,
     SPLIT_BOUNDARIES_JSON,
-    _dt_to_pseudo_date,
+    _dt_to_assumed_date,
+    _dt_to_relative_day,
 )
 
 FIG_DIR = PROJECT_ROOT / "reports" / "figures"
@@ -127,13 +128,24 @@ def plot_transaction_dt(df: pd.DataFrame) -> None:
 
     fig, ax = plt.subplots(figsize=(9, 4))
     sns.histplot(dt, bins=100, ax=ax, color="steelblue")
-    ax.set_xlabel("TransactionDT (seconds from reference)")
+    ax.set_xlabel("TransactionDT (seconds from an undisclosed reference)")
     ax.set_ylabel("Transactions")
-    title = (
-        f"TransactionDT range: {int(dt.min()):,} .. {int(dt.max()):,} "
-        f"({_dt_to_pseudo_date(dt.min())[:10]} .. {_dt_to_pseudo_date(dt.max())[:10]})"
+    ax.set_title(
+        f"TransactionDT range: day {_dt_to_relative_day(dt.min()):.0f} → "
+        f"day {_dt_to_relative_day(dt.max()):.0f} "
+        f"({int(dt.min()):,} .. {int(dt.max()):,} sec)"
     )
-    ax.set_title(title)
+    # Illustrative only: the true reference datetime is not disclosed by IEEE-CIS.
+    ax.text(
+        0.5,
+        -0.28,
+        f"Calendar dates are an assumed convention, not official: "
+        f"~{_dt_to_assumed_date(dt.min())[:10]} → {_dt_to_assumed_date(dt.max())[:10]}",
+        transform=ax.transAxes,
+        ha="center",
+        fontsize=8,
+        color="#888888",
+    )
 
     if boundaries:
         for label, key, color in [

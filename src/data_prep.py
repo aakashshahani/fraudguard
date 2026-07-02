@@ -51,11 +51,14 @@ TRAIN_FRAC = 0.70
 VAL_FRAC = 0.15
 TEST_FRAC = 0.15
 
-# TransactionDT is a time delta in seconds from an (undisclosed) reference.
-# The community consensus reference for the IEEE-CIS competition is
-# 2017-12-01. We only use it to make the split boundaries human-readable;
-# nothing downstream depends on it being the exact true anchor.
-REFERENCE_DATE = datetime(2017, 12, 1)
+# TransactionDT is a time delta in SECONDS from a reference datetime that the
+# IEEE-CIS competition deliberately does NOT disclose (so competitors can't join
+# external calendar data — holidays, weekends — against it). We therefore report
+# the split in RELATIVE DAYS (day 0 = the reference), which is exact and needs no
+# assumption. The calendar dates below are a purely illustrative, ASSUMED
+# convention (a common community guess of ~Dec 2017 for day 0) — they are NOT
+# official and nothing downstream depends on them. Always labelled "assumed".
+ASSUMED_REFERENCE_DATE = datetime(2017, 12, 1)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -157,9 +160,18 @@ def downcast_numeric(df: pd.DataFrame) -> pd.DataFrame:
 # --------------------------------------------------------------------------- #
 # Temporal split
 # --------------------------------------------------------------------------- #
-def _dt_to_pseudo_date(dt_seconds: float) -> str:
-    """Render a TransactionDT (seconds offset) as a human-readable date."""
-    return (REFERENCE_DATE + timedelta(seconds=float(dt_seconds))).isoformat()
+def _dt_to_relative_day(dt_seconds: float) -> float:
+    """TransactionDT (seconds) as a relative day index. Exact, no assumption."""
+    return round(float(dt_seconds) / 86_400, 2)
+
+
+def _dt_to_assumed_date(dt_seconds: float) -> str:
+    """
+    Illustrative calendar date under an ASSUMED reference (see
+    ``ASSUMED_REFERENCE_DATE``). NOT an official IEEE-CIS date — for readability
+    only, and always presented with an 'assumed' label.
+    """
+    return (ASSUMED_REFERENCE_DATE + timedelta(seconds=float(dt_seconds))).isoformat()
 
 
 def temporal_split(
@@ -180,7 +192,8 @@ def temporal_split(
 
     Returns a ``(labels_df, boundaries)`` pair where ``labels_df`` carries
     ``TransactionID``, ``TransactionDT`` and a ``split`` column, and
-    ``boundaries`` is an audit dict of the raw + date-equivalent cut points.
+    ``boundaries`` is an audit dict of the raw seconds + relative-day cut points
+    (plus an illustrative, clearly-labelled assumed calendar date).
     """
     if "TransactionDT" not in df.columns:
         raise KeyError("TransactionDT column is required for the temporal split.")
@@ -209,12 +222,17 @@ def temporal_split(
             "frac": float(s.size / len(labels)),
             "dt_min": int(s.min()),
             "dt_max": int(s.max()),
-            "date_min": _dt_to_pseudo_date(s.min()),
-            "date_max": _dt_to_pseudo_date(s.max()),
+            "day_min": _dt_to_relative_day(s.min()),
+            "day_max": _dt_to_relative_day(s.max()),
+            # Illustrative only — NOT an official date. See ASSUMED_REFERENCE_DATE.
+            "assumed_date_min": _dt_to_assumed_date(s.min()),
+            "assumed_date_max": _dt_to_assumed_date(s.max()),
         }
 
     boundaries = {
-        "reference_date": REFERENCE_DATE.isoformat(),
+        "unit": "TransactionDT is seconds from an undisclosed reference; "
+        "relative days are exact, assumed_* dates are illustrative only.",
+        "assumed_reference_date": ASSUMED_REFERENCE_DATE.isoformat(),
         "cut_train_dt": int(cut_train),
         "cut_val_dt": int(cut_val),
         "train": _bounds("train"),
@@ -226,18 +244,24 @@ def temporal_split(
 
 def log_boundaries(boundaries: dict) -> None:
     """Print the split boundaries so the split is auditable at a glance."""
-    log.info("Temporal split boundaries (reference date %s):", boundaries["reference_date"])
+    log.info(
+        "Temporal split boundaries — primary unit is relative days "
+        "(day 0 = undisclosed reference); calendar dates are ASSUMED, not official:"
+    )
     for name in ("train", "val", "test"):
         b = boundaries[name]
         log.info(
-            "  %-5s | n=%9s (%.1f%%) | DT [%d .. %d] | %s .. %s",
+            "  %-5s | n=%9s (%.1f%%) | DT [%d .. %d] | day [%.1f .. %.1f] "
+            "| assumed date %s .. %s",
             name,
             f"{b['n']:,}",
             b["frac"] * 100,
             b["dt_min"],
             b["dt_max"],
-            b["date_min"],
-            b["date_max"],
+            b["day_min"],
+            b["day_max"],
+            b["assumed_date_min"][:10],
+            b["assumed_date_max"][:10],
         )
 
 

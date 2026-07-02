@@ -108,7 +108,7 @@ pytest -q
 |------|----------|
 | `train_merged.parquet` | Transaction ⨝ identity, dtype-downcast |
 | `split_indices.parquet` | `TransactionID`, `TransactionDT`, `split` (`train`/`val`/`test`) |
-| `split_boundaries.json` | Auditable cut points + date-equivalent boundaries |
+| `split_boundaries.json` | Auditable cut points in raw seconds + relative days (assumed calendar dates labelled as such) |
 
 `src/data_prep.py` also **logs the split boundaries** at runtime so the split is
 auditable without opening any file.
@@ -143,8 +143,13 @@ auditable without opening any file.
 5. Phase 5 — Drift simulation & monitoring
 6. Phase 6 — Serving / deployment
 
-> **TransactionDT note:** `TransactionDT` is a time delta in seconds from an
-> undisclosed reference. The date-equivalent boundaries use the community
-> reference `2017-12-01` purely for readability; nothing downstream depends on
-> that anchor being exact.
+> **TransactionDT note (important):** `TransactionDT` is a time delta in
+> **seconds from a reference datetime that IEEE-CIS deliberately does not
+> disclose** — specifically so competitors can't join external calendar data
+> (holidays, weekends) against it. This project therefore reports the split in
+> **relative days** (day 0 = the reference), which is exact and assumption-free.
+> Any calendar date shown (e.g. in a figure caption) is an **assumed convention**
+> — a common community guess of ~Dec 2017 for day 0 — and is always labelled
+> "assumed". It is **not** an official date; treat the ~6-month span as *≈183
+> relative days*, not a verified calendar range.
 ```
