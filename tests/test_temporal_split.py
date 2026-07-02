@@ -101,3 +101,108 @@ def test_persisted_split_is_strictly_chronological():
     """The real, on-disk split (once generated) must hold the same invariant."""
     labels = pd.read_parquet(SPLIT_INDICES_PARQUET)
     _assert_strictly_chronological(labels)
+
+
+# =========================================================================== #
+# Phase 2 — feature-engineering leakage guardrails
+#
+# Two ways feature engineering can leak the future into the past:
+#   1. A temporal aggregate that counts rows it shouldn't be able to "see" yet.
+#   2. An encoder fit on val/test data instead of train only.
+# Both must fail loudly here.
+# =========================================================================== #
+
+from src.feature_engineering import (  # noqa: E402
+    UNKNOWN_LABEL,
+    apply_frequency,
+    apply_label,
+    expanding_prior_count,
+    fit_frequency_map,
+    fit_label_map,
+)
+
+
+def test_expanding_prior_count_matches_hand_calc_and_ignores_future():
+    """
+    Distinct timestamps, one repeated card1. The prior count at each row must
+    equal the hand-calculated number of *earlier* same-card1 rows — and must
+    not change when the input rows are shuffled (proving it keys off the
+    timestamp, not row position, so a future row can never contribute).
+    """
+    df = pd.DataFrame(
+        {
+            "TransactionID": [1, 2, 3, 4, 5],
+            "TransactionDT": [10, 20, 30, 40, 50],
+            "card1": [100, 100, 200, 100, 200],
+        }
+    )
+    # By hand, per row in time order:
+    #   id1 card100 @10 -> 0 priors
+    #   id2 card100 @20 -> 1 prior  (id1)
+    #   id3 card200 @30 -> 0 priors
+    #   id4 card100 @40 -> 2 priors (id1, id2)
+    #   id5 card200 @50 -> 1 prior  (id3)
+    expected = {1: 0, 2: 1, 3: 0, 4: 2, 5: 1}
+
+    got = df.assign(pc=expanding_prior_count(df, "card1"))
+    assert dict(zip(got["TransactionID"], got["pc"])) == expected
+
+    # Shuffle the rows; per-TransactionID answers must be identical.
+    shuffled = df.sample(frac=1.0, random_state=7).reset_index(drop=True)
+    got_s = shuffled.assign(pc=expanding_prior_count(shuffled, "card1"))
+    assert dict(zip(got_s["TransactionID"], got_s["pc"])) == expected
+
+
+def test_expanding_prior_count_excludes_tied_timestamps():
+    """
+    Rows sharing the exact same TransactionDT must NOT count one another —
+    only strictly-earlier rows count.
+    """
+    df = pd.DataFrame(
+        {
+            "TransactionID": [1, 2, 3],
+            "TransactionDT": [10, 10, 20],  # first two are tied
+            "card1": [100, 100, 100],
+        }
+    )
+    # id1 @10 -> 0 ; id2 @10 -> 0 (tie, does not see id1) ; id3 @20 -> 2
+    expected = {1: 0, 2: 0, 3: 2}
+    got = df.assign(pc=expanding_prior_count(df, "card1"))
+    assert dict(zip(got["TransactionID"], got["pc"])) == expected
+
+
+def _split_frame():
+    """Tiny frame with a category that appears ONLY in the validation split."""
+    return pd.DataFrame(
+        {
+            "split": ["train", "train", "train", "val", "test"],
+            "cat": ["a", "a", "b", "val_only", "b"],
+        }
+    )
+
+
+def test_frequency_encoding_is_fit_on_train_only():
+    df = _split_frame()
+    fmap = fit_frequency_map(df.loc[df["split"] == "train", "cat"])
+
+    # The val-only category must NOT be in the fitted train map.
+    assert "val_only" not in fmap
+    assert fmap == {"a": 2, "b": 1}
+
+    encoded = apply_frequency(df["cat"], fmap)
+    # Unseen category encodes to 0; train categories to their train counts.
+    assert encoded.tolist() == [2, 2, 1, 0, 1]
+
+
+def test_label_encoding_is_fit_on_train_only():
+    df = _split_frame()
+    lmap = fit_label_map(df.loc[df["split"] == "train", "cat"])
+
+    # The val-only category must NOT be in the fitted train map.
+    assert "val_only" not in lmap
+    assert set(lmap) == {"a", "b"}
+
+    encoded = apply_label(df["cat"], lmap)
+    # Unseen category encodes to the designated unknown value (-1).
+    assert encoded.iloc[3] == UNKNOWN_LABEL
+    assert (encoded.iloc[[0, 1, 2, 4]] >= 0).all()
