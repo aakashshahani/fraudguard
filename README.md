@@ -4,19 +4,57 @@
 
 # FraudGuard
 
-A fraud-detection project built on the **IEEE-CIS Fraud Detection** dataset
-(Kaggle competition `ieee-fraud-detection`) — the real one that requires
-feature engineering across a transaction/identity join, not the toy
-`creditcard.csv`.
+![CI](https://github.com/aakashshahani/fraudguard/actions/workflows/ci.yml/badge.svg)
 
-The project is delivered in **6 phases**. This repository currently implements:
+An **end-to-end fraud-detection system** built on the **IEEE-CIS Fraud Detection**
+dataset (Kaggle `ieee-fraud-detection`) — the real one that requires feature
+engineering across a transaction/identity join, not the toy `creditcard.csv`. It
+runs the full lifecycle in **7 phases**: data → features → adversarial validation
+→ pre-registered modeling → cost-based thresholding → explainability & drift →
+serving, testing, CI.
 
-> ### Phase 1 — Data acquisition, merge & temporal split ✅
-> Load the raw CSVs, left-join identity onto transactions, downcast dtypes to
-> fit a laptop, persist to Parquet, and build a **strictly chronological**
-> train/validation/test split with a pytest guardrail against leakage.
->
-> No encoding, no feature engineering, no models yet — those are later phases.
+**Headline result:** final **test PR-AUC 0.5266** at a cost-minimising operating
+point (precision 0.32 / recall 0.63), holding above a published paper's XGBoost
+baseline (0.4692) *after* an honest temporal-decay hit — and every step is guarded
+against leakage by tests that fail loudly.
+
+The through-line is **leakage discipline and honest claims**: a strictly temporal
+split, causal (point-in-time) feature aggregation, encoders fit on train only, a
+pre-registered evaluation protocol, a single sealed test evaluation, and a
+serving path proven free of training/serving skew by a fixture test.
+
+## Architecture
+
+```
+                         IEEE-CIS raw CSVs (transaction ⨝ identity)
+                                        │
+     ┌──────────────────────────────────┴───────────────────────────────────┐
+     │ OFFLINE  (train / validation only until the very end)                  │
+     │                                                                        │
+     │  P1  merge + downcast ──► strictly TEMPORAL split (70/15/15) ──┐       │
+     │                                                                ▼       │
+     │  P2  feature engineering: freq/label encoders (fit on TRAIN),          │
+     │      missingness signals, −999 sentinels                               │
+     │  P2.5 UID = card1+addr1+D1n ──► CAUSAL expanding aggregates            │
+     │                                                                │       │
+     │  P3  adversarial validation ──► drop drifting feats ──► feature_manifest
+     │                                                                │       │
+     │  P4  families (LogReg/RF/XGB) ──► imbalance bake-off ──► winner.joblib  │
+     │      (pre-registered protocol; PR-AUC decides; SMOTE hypothesis tested) │
+     │                                                                │       │
+     │  P5  cost-min threshold on VAL ──► seal broken ONCE ──► TEST PR-AUC     │
+     │  P6  SHAP (95% content) + val-vs-test drift monitor                     │
+     └────────────────────────────────────┬───────────────────────────────────┘
+                                           │ frozen: model + threshold + manifest + encoders
+     ┌─────────────────────────────────────▼──────────────────────────────────┐
+     │ ONLINE  (P7 serving)                                                     │
+     │  POST /predict  →  feature store lookup (card1/uid latest state)         │
+     │                 →  persisted encoders + sentinels + manifest order       │
+     │                 →  XGBoost + threshold  →  {probability, decision}       │
+     │  skew guardrail: assembled vector == offline features, column-for-column │
+     │  Docker · GitHub Actions CI (runs on committed fixtures, no Kaggle data) │
+     └──────────────────────────────────────────────────────────────────────── ┘
+```
 
 ---
 
@@ -24,18 +62,24 @@ The project is delivered in **6 phases**. This repository currently implements:
 
 ```
 fraudguard/
-├── data/
-│   ├── raw/            # raw Kaggle CSVs  (gitignored — large)
-│   └── processed/      # merged parquet + split artifacts (gitignored)
-├── notebooks/          # exploratory notebooks
-├── reports/figures/    # saved EDA plots (gitignored, regenerated)
+├── data/{raw,processed}/          # gitignored (except the small feature_manifest.json)
+├── models/                        # frozen artifacts (winner, threshold, encoders) — committed
+├── docs/                          # per-phase results + the pre-registered protocol
+├── reports/figures/               # plots (gitignored, regenerated)
 ├── src/
-│   ├── data_prep.py    # load → merge → downcast → parquet → temporal split
-│   └── eda.py          # class imbalance, missingness, TransactionDT range
-├── tests/
-│   └── test_temporal_split.py   # asserts the split is leak-free
-├── requirements.txt
-└── README.md
+│   ├── data_prep.py               # P1  merge → downcast → temporal split
+│   ├── eda.py                     # P1  class imbalance, missingness, TransactionDT range
+│   ├── feature_engineering.py     # P2  encoders (fit on train), missingness, sentinels
+│   ├── uid_features.py            # P2.5 UID reconstruction + causal expanding aggregates
+│   ├── adversarial_validation.py  # P3  drift-drop features → feature_manifest.json
+│   ├── modeling.py                # P4  family progression + imbalance bake-off (W&B)
+│   ├── evaluation.py              # P5  cost-min threshold + one-time test evaluation
+│   ├── monitoring.py              # P6  SHAP + val-vs-test drift (PSI, adversarial AUC)
+│   └── serving/                   # P7  feature_store · assemble · FastAPI api
+├── scripts/                       # build_serving_artifacts · benchmark_latency
+├── tests/                         # all phases' guardrails (run in CI on fixtures)
+├── Dockerfile · .github/workflows/ci.yml · LICENSE (MIT)
+└── requirements.txt · requirements-serving.txt
 ```
 
 `data/raw` and `data/processed` are **gitignored** — the dataset is hundreds of
@@ -292,6 +336,16 @@ auditable without opening any file.
   empty**. The overall-separability signal gives a real "the world shifted" alert, but
   no single monitored feature would have sharply predicted the −0.067 drop; the decline
   is diffuse. Full breakdown in `docs/phase6_results.md`.
+- **Phase 7 — serving with a skew guardrail, not just an endpoint.** The FastAPI
+  `/predict` service reconstructs the feature vector at request time by reusing
+  Phase 2's *persisted* encoders, the same missingness/sentinel logic, and an
+  in-memory feature store (latest per-`card1`/`uid` aggregate state — a stand-in
+  for what Feast/Tecton+Redis maintain live). The load-bearing piece is the
+  **training/serving skew test**: 10 real transactions' raw fields go through the
+  live assembly and the result is asserted equal, column-for-column, to their
+  offline `features.parquet` vector. Unknown cards/uids fall back to the Phase 2.5
+  insufficient-history sentinel rather than crashing or silently zeroing. Full
+  breakdown in `docs/phase7_results.md`.
 
 ---
 
@@ -305,9 +359,10 @@ auditable without opening any file.
    *(results in `docs/phase4_results.md`, winner in `models/`)*
 5. **Phase 5 — Threshold selection & final evaluation** ✅
    *(results in `docs/phase5_results.md`; test split evaluated once)*
-6. **Phase 6 — Explainability (SHAP) & drift monitoring** ✅ *(current)*
+6. **Phase 6 — Explainability (SHAP) & drift monitoring** ✅
    *(results in `docs/phase6_results.md`)*
-7. Phase 7 — Serving / deployment
+7. **Phase 7 — Serving, testing, CI & documentation** ✅ *(complete)*
+   *(results in `docs/phase7_results.md`)*
 
 > **TransactionDT note (important):** `TransactionDT` is a time delta in
 > **seconds from a reference datetime that IEEE-CIS deliberately does not
@@ -318,4 +373,82 @@ auditable without opening any file.
 > — a common community guess of ~Dec 2017 for day 0 — and is always labelled
 > "assumed". It is **not** an official date; treat the ~6-month span as *≈183
 > relative days*, not a verified calendar range.
+
+---
+
+## Serving (Phase 7)
+
+```bash
+# Run the API locally (standalone, using the committed feature-store snapshot)
+FRAUDGUARD_STORE=snapshot uvicorn src.serving.api:app --port 8000
+
+# Or containerised (lean image; no Kaggle data required)
+docker build -t fraudguard . && docker run -p 8000:8000 fraudguard
+
+# Score a transaction
+curl -s localhost:8000/predict -H 'content-type: application/json' \
+  -d '{"card1": 10000, "TransactionAmt": 100.0, "TransactionDT": 15000000, "D1": 14, "addr1": 315, "ProductCD": "W"}'
+# -> {"fraud_probability": ..., "decision": 0, "threshold": 0.0783, "uid_known": false}
 ```
+
+`/predict` reconstructs the model's feature vector at request time from the raw
+fields — feature-store lookup → **persisted** Phase 2 encoders → missingness /
+`-999` sentinels → manifest column order → XGBoost + the Phase 5 threshold. The
+CI-enforced **skew test** guarantees this assembly matches the offline features
+column-for-column, and unknown cards/uids degrade to the insufficient-history
+sentinel rather than crashing.
+
+**Latency (measured, honest):** single-request **p50 343ms / p99 449ms** — which
+does *not* yet fit a ~50–100ms real-time checkout budget. The breakdown shows why
+and that it's cheaply fixable: the model + store lookup are ~22ms; the **pandas
+per-row assembly is ~210ms** (pandas is built for batch, not single inference).
+Replacing it with dict/numpy assembly targets <10ms (~35ms total). Documented as a
+scoped optimisation rather than shipping a misleading number — see
+`docs/phase7_results.md` and `scripts/benchmark_latency.py`.
+
+## Scaling considerations
+
+- **In-memory store → Feast/Tecton + Redis.** The `FeatureStore` here loads the
+  whole dataset at startup and holds latest per-key state in a dict. At production
+  scale that becomes: an **online store** (Redis) for millisecond key lookups, an
+  **offline store** for point-in-time-correct training joins, and a **streaming**
+  path that updates each key's aggregates as events arrive — so the "latest state"
+  we snapshot statically is instead maintained live. The FastAPI app is stateless
+  and horizontally scalable behind a load balancer; the feature store is the shared
+  stateful tier. The `assemble.py` logic is exactly the transform a feature-store
+  "on-demand transform" would host.
+- **Retraining cadence, grounded in the measured drift.** This isn't hypothetical:
+  Phase 5 measured a **−0.067 PR-AUC decline** from validation into a ~1-month
+  future test window, and Phase 6 measured a **val-vs-test adversarial AUC of
+  0.9999** — the input distribution shifts substantially month-over-month. That
+  argues for **frequent retraining** (weekly–monthly) rather than set-and-forget,
+  plus **trigger-based** retraining when the Phase 6 drift monitor's overall
+  adversarial AUC / PSI crosses an alert threshold, with a shadow-evaluation gate
+  before any new model is promoted.
+
+## Future work
+
+- **Real-time feature store** (Feast/Tecton + Redis) with streaming aggregate
+  updates, replacing the static in-memory snapshot.
+- **Dead-letter path** for malformed / incomplete requests: schema-validate at the
+  edge, route rejects to a DLQ for inspection and replay instead of failing open.
+- **Automated retraining trigger** wired to the Phase 6 drift monitor — when
+  overall adversarial AUC or per-feature PSI crosses threshold, kick off a
+  retrain + shadow-eval pipeline, closing the monitor→retrain loop.
+
+## Beyond credit-card fraud
+
+The hard part of this project isn't credit cards — it's the **rare-class,
+adversarial, temporally-drifting** shape of the problem, and that shape is
+everywhere abuse/integrity teams operate. **Ad click fraud**, **account takeover**,
+and **fake engagement / bot detection** are all extreme class imbalance against an
+adversary who actively adapts (so yesterday's features drift), where labels arrive
+late and a fixed random split silently leaks the future. The machinery built here
+transfers directly: strictly temporal splits, point-in-time-correct feature
+aggregation, adversarial validation to drop drifting signal, cost-asymmetric
+thresholding, drift monitoring, and a serving path proven free of training/serving
+skew. Swap the dataset, keep the discipline.
+
+## License
+
+[MIT](LICENSE)
