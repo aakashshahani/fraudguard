@@ -2,9 +2,10 @@
 # imbalanced-learn is required because the saved model is an imblearn Pipeline.
 pandas
 pyarrow
-scikit-learn
-xgboost
-imbalanced-learn
+# Pinned: must match the versions that created models/phase4_winner.joblib (a pickle).
+scikit-learn==1.9.0
+xgboost==3.3.0
+imbalanced-learn==0.14.2
 joblib
 fastapi
 uvicorn

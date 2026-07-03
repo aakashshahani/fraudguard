@@ -4,10 +4,11 @@ matplotlib
 seaborn
 pytest
 kaggle
-xgboost
-scikit-learn
+# Pinned: the committed model is a pickle — these must match to unpickle it in CI.
+xgboost==3.3.0
+scikit-learn==1.9.0
+imbalanced-learn==0.14.2
 wandb
-imbalanced-learn
 joblib
 shap
 fastapi
