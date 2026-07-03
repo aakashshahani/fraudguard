@@ -259,14 +259,17 @@ auditable without opening any file.
   cost on validation** (t≈0.078: precision 0.39, recall 0.66); a sensitivity sweep
   (5:1→50:1) shows the threshold falling and recall rising as missed fraud gets
   costlier — the expected direction, decision unchanged. The **Stage 1
-  RF-vs-XGBoost divergence resolved**: it existed only for the *balanced* XGBoost
-  arm; the deployed `none` model is cheaper than RF at each model's own best
-  operating point (0.1517 vs 0.1647). Then the test split was unsealed **once**:
-  **test PR-AUC 0.5266 vs validation 0.5937 (−0.067)** — a drop in the expected
-  direction, consistent with Phase 3's ~0.9995 temporal separability (test sits
-  further in the future, so history features drift more). That the gap is a
-  *decline*, not an optimistic gain, is itself evidence the evaluation wasn't
-  leaking. Full breakdown in `docs/phase5_results.md`.
+  RF-vs-XGBoost divergence narrowed** (not fully closed): it existed only for the
+  *balanced* XGBoost arm, and the deployed `none` model is cheaper than the RF
+  *configuration tested* (RF+balanced) at each model's own best point (0.1517 vs
+  0.1647) — a symmetric RF+none check wasn't run, so a reversal stays technically
+  open, though XGBoost's decisive Stage-1 PR-AUC margin makes it unlikely. Then the
+  test split was unsealed **once**: **test PR-AUC 0.5266 vs this artifact's seed-42
+  validation 0.5937 (−0.067; the Phase 4 3-seed mean was 0.5897)** — a drop in the
+  expected direction, consistent with Phase 3's ~0.9995 temporal separability
+  (direction/qualitative match, not a derived magnitude). That the gap is a
+  *decline* rather than an optimistic gain is consistent with — though not proof of
+  — a leak-free evaluation. Full breakdown in `docs/phase5_results.md`.
 
 ---
 
