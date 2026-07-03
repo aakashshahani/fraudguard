@@ -198,28 +198,8 @@ def encode_categoricals(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     Returns the frame plus the fitted maps (so they are inspectable / reusable
     and the leakage test can assert they contain no val/test-only categories).
     """
+    freq_cols, label_cols = select_encoder_columns(df)
     train_mask = df["split"] == "train"
-
-    # Which columns get which encoder. Label-encode only the *string* id columns
-    # in id_12..id_38 — numeric id_* are already model-ready and must not be
-    # turned into arbitrary codes.
-    non_numeric = [
-        c for c in df.columns
-        if c not in ("split",)
-        and not pd.api.types.is_numeric_dtype(df[c])
-        and not pd.api.types.is_bool_dtype(df[c])
-    ]
-    id_label_cols = [c for c in ID_LABEL_RANGE if c in non_numeric]
-    label_cols = [c for c in LABEL_COLS_BASE + id_label_cols if c in df.columns]
-    freq_cols = [c for c in FREQ_COLS if c in df.columns]
-
-    # Safety net: any remaining non-numeric column not explicitly handled.
-    handled = set(freq_cols) | set(label_cols)
-    auto_freq = [c for c in non_numeric if c not in handled]
-    if auto_freq:
-        log.info("Auto-detected non-numeric cols -> frequency encoding: %s", auto_freq)
-    freq_cols = freq_cols + auto_freq
-
     fitted_maps: dict = {"frequency": {}, "label": {}}
 
     for col in freq_cols:
@@ -237,6 +217,39 @@ def encode_categoricals(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         len(freq_cols), len(label_cols), f"{int(train_mask.sum()):,}",
     )
     return df, fitted_maps
+
+
+def select_encoder_columns(df: pd.DataFrame) -> tuple[list[str], list[str]]:
+    """
+    Decide which columns get frequency vs label encoding (shared by the Phase 2
+    transform and by serving-time encoder persistence, so both agree exactly).
+    Label-encode only the *string* id columns in id_12..id_38 — numeric id_* are
+    already model-ready and must not be turned into arbitrary codes.
+    """
+    non_numeric = [
+        c for c in df.columns
+        if c not in ("split",)
+        and not pd.api.types.is_numeric_dtype(df[c])
+        and not pd.api.types.is_bool_dtype(df[c])
+    ]
+    id_label_cols = [c for c in ID_LABEL_RANGE if c in non_numeric]
+    label_cols = [c for c in LABEL_COLS_BASE + id_label_cols if c in df.columns]
+    freq_cols = [c for c in FREQ_COLS if c in df.columns]
+    handled = set(freq_cols) | set(label_cols)
+    auto_freq = [c for c in non_numeric if c not in handled]  # safety net
+    return freq_cols + auto_freq, label_cols
+
+
+def fit_encoders(df: pd.DataFrame) -> dict:
+    """Fit frequency/label maps on the TRAIN split only (no transform). Serving reuses this."""
+    freq_cols, label_cols = select_encoder_columns(df)
+    train = df[df["split"] == "train"]
+    maps = {"frequency": {}, "label": {}}
+    for col in freq_cols:
+        maps["frequency"][col] = {str(k): int(v) for k, v in fit_frequency_map(train[col]).items()}
+    for col in label_cols:
+        maps["label"][col] = {str(k): int(v) for k, v in fit_label_map(train[col]).items()}
+    return maps
 
 
 def fill_v_sentinels(df: pd.DataFrame) -> pd.DataFrame:
