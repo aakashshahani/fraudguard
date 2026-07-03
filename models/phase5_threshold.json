@@ -1,0 +1,7 @@
+{
+  "threshold": 0.0783,
+  "fn_ratio": 10,
+  "selected_on": "validation",
+  "metric": "min cost (10*FN + FP)/N",
+  "note": "Phase 5 finalized threshold; loaded read-only by later phases."
+}

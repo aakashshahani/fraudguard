@@ -33,12 +33,15 @@ from sklearn.metrics import average_precision_score
 from src.data_prep import PROCESSED_DIR, PROJECT_ROOT
 from src.feature_engineering import FEATURES_PARQUET
 from src.modeling import (
+    MODELS_DIR,
     TARGET,
     WINNER_ARTIFACT,
     build_model,
     load_Xy,
     manifest_features,
 )
+
+PHASE5_THRESHOLD_JSON = MODELS_DIR / "phase5_threshold.json"
 
 try:
     import joblib
@@ -143,6 +146,12 @@ def part_a(prob_val, y_val) -> tuple[dict, pd.DataFrame]:
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     sweep.to_csv(SWEEP_CSV, index=False)
     best = best_operating_point(sweep)
+    # Persist the finalized threshold as a loadable artifact (Phase 6+ read it).
+    PHASE5_THRESHOLD_JSON.write_text(json.dumps(
+        {"threshold": best["threshold"], "fn_ratio": PRIMARY_FN_RATIO,
+         "selected_on": "validation", "metric": "min cost (10*FN + FP)/N",
+         "note": "Phase 5 finalized threshold; loaded read-only by later phases."},
+        indent=2))
     log.info("  chosen threshold=%.4f  cost=%.4f  precision=%.4f  recall=%.4f  f1=%.4f",
              best["threshold"], best["cost"], best["precision"], best["recall"], best["f1"])
 

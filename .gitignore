@@ -14,6 +14,7 @@ data/processed/*
 models/*
 !models/phase4_winner.joblib
 !models/phase4_winner.json
+!models/phase5_threshold.json
 wandb/
 
 # ---- Kaggle credentials (never commit secrets) ----
