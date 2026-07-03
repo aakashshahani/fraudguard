@@ -6,3 +6,6 @@ pytest
 kaggle
 xgboost
 scikit-learn
+wandb
+imbalanced-learn
+joblib
