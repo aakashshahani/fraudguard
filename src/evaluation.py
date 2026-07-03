@@ -242,17 +242,26 @@ def _write_doc(a, b, c, d):
     adv = _residual_adv_auc()
     gap = d["test"]["pr_auc"] - d["val_pr_auc"]
     drift_line = (
-        f"Test PR-AUC ({d['test']['pr_auc']:.4f}) vs validation PR-AUC "
-        f"({d['val_pr_auc']:.4f}) — a change of {gap:+.4f}. "
+        f"Test PR-AUC ({d['test']['pr_auc']:.4f}) vs **this artifact's own validation "
+        f"PR-AUC** ({d['val_pr_auc']:.4f} — the seed-42 score of the saved model, which is "
+        f"the right baseline here; distinct from the Phase 4 3-seed mean "
+        f"{PHASE4_VAL_PR_AUC_MEAN:.4f}) — a change of {gap:+.4f}. "
     )
     if adv is not None:
         if gap < -0.02:
             drift_line += (
-                f"A drop of this size is **consistent with** Phase 3's finding that the "
-                f"feature set is ~{adv} adversarially separable across time: the test "
-                f"period sits further in the future than validation, so history-"
-                f"accumulation features drift further and ranking degrades somewhat. "
-                f"It points to expected temporal decay, not a new problem.")
+                f"A drop **in this direction** is consistent with Phase 3's finding that "
+                f"the feature set is ~{adv} adversarially separable across time: the test "
+                f"period sits further in the future than validation, so a plausible "
+                f"mechanism is history-accumulation features drifting further and ranking "
+                f"degrading. To be precise about the strength of this link: the **direction "
+                f"and qualitative consistency** are what line up — no quantitative "
+                f"relationship between adversarial-AUC magnitude and expected PR-AUC decay "
+                f"was derived, so this is a consistency check, not a predicted magnitude. "
+                f"Separately, a decline is the direction an honest, non-leaking evaluation "
+                f"would show (an optimistic *gain* on further-future data would be the red "
+                f"flag) — so the result is **consistent with, though not proof of**, a "
+                f"leak-free pipeline.")
         else:
             drift_line += (
                 f"Despite Phase 3's ~{adv} adversarial separability (strong temporal "
@@ -306,14 +315,22 @@ def _write_doc(a, b, c, d):
         f"| RandomForest (secondary) | {c['rf']['threshold']:.4f} | {c['rf']['precision']:.4f} | "
         f"{c['rf']['recall']:.4f} | {c['rf']['cost']:.4f} |",
         "",
-        (f"**Resolves the Stage 1 divergence.** In Phase 4, cost favoured RF *only* when "
-         f"XGBoost carried `scale_pos_weight` (the balanced arm). The deployed model is "
-         f"`none`, and at each model's own best operating point XGBoost is "
-         f"{'cheaper' if c['xgb_cheaper'] else 'NOT cheaper'} "
+        (f"**Addresses the Stage 1 divergence — with an explicit boundary.** In Phase 4, "
+         f"cost favoured RF *only* when XGBoost carried `scale_pos_weight` (the balanced "
+         f"arm). The deployed model is `none`, and at each model's own cost-minimising "
+         f"threshold XGBoost+none is "
+         f"{'cheaper than' if c['xgb_cheaper'] else 'NOT cheaper than'} the RF tested "
          f"({a['cost']:.4f} vs RF {c['rf']['cost']:.4f}). "
-         + ("The divergence was an artifact of the balanced XGBoost arm; the production "
-            "model dominates RF on cost too, so there is nothing left to resolve in RF's "
-            "favour." if c["xgb_cheaper"] else
+         + ("**Boundary of what was actually checked:** the RF here is RF+*balanced* (its "
+            "exact Stage-1 config), not RF+none. Since `none` beat `balanced` substantially "
+            "for XGBoost (0.5897 vs 0.5446 val PR-AUC in Phase 4), RF+none might likewise "
+            "improve on RF+balanced — which was **not** tested. So the precise claim is "
+            "'XGBoost+none beats the RF configuration we tested', **not** 'RF is closed "
+            "out'; a fully symmetric best-vs-best comparison remains technically open. A "
+            "reversal is unlikely — XGBoost won Stage 1 on PR-AUC (the pre-registered "
+            "decider) decisively, before this cost tension existed — but that is an "
+            "expectation, not a tested result."
+            if c["xgb_cheaper"] else
             "RF remains cheaper even here — the divergence is real and worth revisiting.")),
         "",
         "## Part D — Final test evaluation (test unsealed once, read-only)",

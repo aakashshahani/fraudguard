@@ -30,7 +30,7 @@ Each model is compared **at its own cost-minimising operating point** (not at a 
 | XGBoost + none (deployed) | 0.0783 | 0.3926 | 0.6604 | 0.1517 |
 | RandomForest (secondary) | 0.1500 | 0.3086 | 0.6706 | 0.1647 |
 
-**Resolves the Stage 1 divergence.** In Phase 4, cost favoured RF *only* when XGBoost carried `scale_pos_weight` (the balanced arm). The deployed model is `none`, and at each model's own best operating point XGBoost is cheaper (0.1517 vs RF 0.1647). The divergence was an artifact of the balanced XGBoost arm; the production model dominates RF on cost too, so there is nothing left to resolve in RF's favour.
+**Addresses the Stage 1 divergence — with an explicit boundary.** In Phase 4, cost favoured RF *only* when XGBoost carried `scale_pos_weight` (the balanced arm). The deployed model is `none`, and at each model's own cost-minimising threshold XGBoost+none is cheaper than the RF tested (0.1517 vs RF 0.1647). **Boundary of what was actually checked:** the RF here is RF+*balanced* (its exact Stage-1 config), not RF+none. Since `none` beat `balanced` substantially for XGBoost (0.5897 vs 0.5446 val PR-AUC in Phase 4), RF+none might likewise improve on RF+balanced — which was **not** tested. So the precise claim is 'XGBoost+none beats the RF configuration we tested', **not** 'RF is closed out'; a fully symmetric best-vs-best comparison remains technically open. A reversal is unlikely — XGBoost won Stage 1 on PR-AUC (the pre-registered decider) decisively, before this cost tension existed — but that is an expectation, not a tested result.
 
 ## Part D — Final test evaluation (test unsealed once, read-only)
 
@@ -46,6 +46,6 @@ Scoring the deployed model at the Part-A threshold `0.0783` on the sealed test s
 
 ### Test vs validation PR-AUC — read in light of Phase 3
 
-Test PR-AUC (0.5266) vs validation PR-AUC (0.5937) — a change of -0.0671. A drop of this size is **consistent with** Phase 3's finding that the feature set is ~0.9995 adversarially separable across time: the test period sits further in the future than validation, so history-accumulation features drift further and ranking degrades somewhat. It points to expected temporal decay, not a new problem.
+Test PR-AUC (0.5266) vs **this artifact's own validation PR-AUC** (0.5937 — the seed-42 score of the saved model, which is the right baseline here; distinct from the Phase 4 3-seed mean 0.5897) — a change of -0.0671. A drop **in this direction** is consistent with Phase 3's finding that the feature set is ~0.9995 adversarially separable across time: the test period sits further in the future than validation, so a plausible mechanism is history-accumulation features drifting further and ranking degrading. To be precise about the strength of this link: the **direction and qualitative consistency** are what line up — no quantitative relationship between adversarial-AUC magnitude and expected PR-AUC decay was derived, so this is a consistency check, not a predicted magnitude. Separately, a decline is the direction an honest, non-leaking evaluation would show (an optimistic *gain* on further-future data would be the red flag) — so the result is **consistent with, though not proof of**, a leak-free pipeline.
 
 *This is the final, one-time test evaluation. Whatever it shows, it stands.*
