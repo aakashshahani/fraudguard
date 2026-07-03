@@ -22,10 +22,6 @@ from __future__ import annotations
 import json
 import logging
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.metrics import average_precision_score
@@ -140,7 +136,15 @@ def _load_test_Xy() -> tuple[pd.DataFrame, np.ndarray]:
 # --------------------------------------------------------------------------- #
 # Parts
 # --------------------------------------------------------------------------- #
+def _plt():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    return plt
+
+
 def part_a(prob_val, y_val) -> tuple[dict, pd.DataFrame]:
+    plt = _plt()
     log.info("PART A — cost-minimising threshold on validation (10:1)")
     sweep = cost_sweep(y_val, prob_val, PRIMARY_FN_RATIO)
     FIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -169,6 +173,7 @@ def part_a(prob_val, y_val) -> tuple[dict, pd.DataFrame]:
 
 
 def part_b(prob_val, y_val, primary: dict) -> list[dict]:
+    plt = _plt()
     log.info("PART B — cost-ratio sensitivity on validation (context only)")
     rows = [{"ratio": f"{PRIMARY_FN_RATIO}:1 (primary)", **best_operating_point(
         cost_sweep(y_val, prob_val, PRIMARY_FN_RATIO))}]
