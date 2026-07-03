@@ -8,6 +8,10 @@ data/processed/*
 *.csv.zip
 *.zip
 
+# ---- Model artifacts + experiment tracking (large / local) ----
+models/
+wandb/
+
 # ---- Kaggle credentials (never commit secrets) ----
 kaggle.json
 .kaggle/
