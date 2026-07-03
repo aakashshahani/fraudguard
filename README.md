@@ -107,7 +107,10 @@ python -m src.uid_features
 # Phase 3 — adversarial validation + frozen feature manifest  (train+val only)
 python -m src.adversarial_validation
 
-# Guardrail tests (temporal split + feature-engineering + UID + adversarial leakage)
+# Phase 4 — model family progression + imbalance bake-off  (train+val only; W&B offline)
+python -m src.modeling
+
+# Guardrail tests (temporal split + FE + UID + adversarial + modeling leakage)
 pytest -q
 ```
 
@@ -235,6 +238,19 @@ auditable without opening any file.
   design, and the exact winner + tie-break rule are fixed *before* results, so the
   comparison can't quietly become "whichever number looked best afterward." Same
   discipline as the split-boundary guardrail, applied to modeling.
+- **Phase 4 outcome — imbalance handling didn't help *ranking*, and that's not a
+  contradiction.** XGBoost won the family stage (val PR-AUC 0.5446 vs RF 0.5406 vs
+  logreg 0.3623). In the bake-off, **no-handling won (0.5897)**, ahead of SMOTE
+  (0.5752), class weights (0.5446), and both (0.5335). PR-AUC is a
+  *threshold-independent ranking* metric; class weights and SMOTE reshape the
+  score distribution to trade precision for recall, which doesn't improve ranking
+  — their benefit lands at a chosen operating point, and choosing that point is
+  deliberately **Phase 5**. The pre-registered SMOTE prediction (class weights ≥
+  SMOTE) was **refuted** — SMOTE out-ranked the class-weight arm — but SMOTE did
+  not "win": no-handling beat it, and stacking weights+SMOTE was worst. Reporting
+  a refuted pre-registration honestly is the point of pre-registering. Full tables
+  in `docs/phase4_results.md`; the winning `xgboost + none` (seed 42) model is
+  frozen in `models/phase4_winner.joblib` for Phase 5/6 to reuse, not retrain.
 
 ---
 
@@ -243,9 +259,10 @@ auditable without opening any file.
 1. **Phase 1 — Data acquisition, merge & temporal split** ✅
 2. **Phase 2 — Feature engineering & encoding** ✅
    *(incl. Phase 2.5 — UID pseudo-identity aggregation)* ✅
-3. **Phase 3 — Adversarial validation & pre-registered Phase 4 protocol** ✅ *(current)*
-4. Phase 4 — Baseline modeling & imbalance bake-off *(protocol pre-registered in `docs/`)*
-5. Phase 5 — Model tuning & evaluation
+3. **Phase 3 — Adversarial validation & pre-registered Phase 4 protocol** ✅
+4. **Phase 4 — Baseline modeling & imbalance bake-off** ✅ *(current)*
+   *(results in `docs/phase4_results.md`, winner in `models/`)*
+5. Phase 5 — Threshold selection & evaluation
 6. Phase 6 — Drift simulation & monitoring
 7. Phase 7 — Serving / deployment
 
