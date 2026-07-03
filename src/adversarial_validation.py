@@ -202,6 +202,19 @@ def run() -> dict:
             "(far slower, negligible gain on monotonic tabular features)."
         ),
         "n_flagged": len(flagged),
+        "interpretation": (
+            "Univariate flagging caught the individually-strongest drifting "
+            "features. That dropping them barely moved the combined AUC "
+            f"({round(overall, 4)} -> {round(overall_allowed, 4)}) shows the "
+            "separability comes from MANY features acting jointly, not one or two "
+            "bad actors — the known blind spot of per-feature flagging vs. "
+            "full-model importance. This residual is an EXPECTED property of using "
+            "inherently time-cumulative features (uid/card prior counts) by design "
+            "— a live model sees the same growth daily — and is NOT evidence the "
+            "feature set generalizes cleanly. Whether the model over-relies on "
+            "'how much history exists' as a shortcut is deferred to a later SHAP "
+            "analysis."
+        ),
         "features": per_feature,
     }
     ADV_REPORT_JSON.write_text(json.dumps(report, indent=2))
