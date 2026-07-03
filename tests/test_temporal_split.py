@@ -451,3 +451,51 @@ def test_cost_sweep_finds_the_true_minimum_cost_threshold():
         brute.append((fn_ratio * fn + fp) / n)
     assert best["cost"] == pytest.approx(min(brute), abs=1e-12)
     assert 0.0 <= best["threshold"] <= 1.0
+
+
+# =========================================================================== #
+# Phase 6 — drift monitoring reads test FEATURES only, and touches nothing
+# =========================================================================== #
+
+import hashlib  # noqa: E402
+
+from src.modeling import MANIFEST_JSON, WINNER_ARTIFACT  # noqa: E402
+
+
+def test_drift_monitoring_never_references_isfraud_label():
+    """
+    Part B's candidate columns and its val/test loader must never include the
+    isFraud target — drift is measured on feature values only.
+    """
+    from src.modeling import TARGET
+    from src.monitoring import _candidate_columns
+
+    cols = _candidate_columns()
+    assert TARGET not in cols
+    for banned in ["TransactionID", "TransactionDT", "TransactionDay", "split", TARGET]:
+        assert banned not in cols
+
+    # The loader's feature matrix likewise excludes the label (guard only, no full read).
+    import inspect
+
+    import src.monitoring as m
+    src = inspect.getsource(m.load_val_test_features)
+    assert 'assert TARGET not in cols' in src  # the loader self-guards against the label
+
+
+@pytest.mark.skipif(
+    not (WINNER_ARTIFACT.exists() and MANIFEST_JSON.exists()),
+    reason="Phase 4/5 artifacts not built yet",
+)
+def test_phase6_is_read_only_against_model_threshold_and_manifest():
+    """Importing/using the monitoring loaders must not modify the frozen artifacts."""
+    from src.evaluation import PHASE5_THRESHOLD_JSON
+    from src.monitoring import load_threshold
+
+    targets = [WINNER_ARTIFACT, MANIFEST_JSON, PHASE5_THRESHOLD_JSON]
+    before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in targets if p.exists()}
+
+    _ = load_threshold()  # a representative read-only operation
+
+    after = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in targets if p.exists()}
+    assert before == after, "Phase 6 must be read-only against model/threshold/manifest"
