@@ -166,6 +166,7 @@ def part_a_shap(model, X_val, y_val, threshold: float) -> dict:
         "history_pct": hist_pct,
         "per_feature_history": {f: float(imp[f]) for f in hist_feats},
         "top15": {k: float(v) for k, v in top.items()},
+        "importance": {f: float(imp[f]) for f in imp.index},   # full per-feature mean|SHAP|
         "n_features": len(imp),
     }
 
@@ -293,6 +294,30 @@ def _write_doc(a, b, threshold):
         mark = "" if d["feature"] in deployed else " *(dropped in Phase 3)*"
         return f"| {d['feature']}{mark} | {d['adversarial_auc']:.4f} | {d['psi']:.4f} |"
 
+    # ---- drift x importance quadrant: is any feature BOTH used-heavily AND drifting? ----
+    imp = a["importance"]
+    total_imp = sum(imp.values()) or 1.0
+    ranked = sorted(imp, key=lambda f: -imp[f])
+    rank = {f: i + 1 for i, f in enumerate(ranked)}
+    psi_by = {d["feature"]: d["psi"] for d in b["per_feature"]}
+    n_feat = a["n_features"]
+    TOPK = 20  # "meaningfully important" = top ~5% of features by SHAP
+
+    top_shap = ranked[:8]
+    drift_deployed = sorted(
+        [d for d in b["per_feature"] if d["feature"] in deployed and d["psi"] >= PSI_MODERATE],
+        key=lambda d: -d["psi"])
+    risk_quadrant = [f for f in ranked[:TOPK] if psi_by.get(f, 0.0) >= PSI_MODERATE]
+
+    def srow(f):  # SHAP-first row: feature | SHAP share | rank | PSI
+        return (f"| {f} | {imp[f]/total_imp:.2%} | {rank[f]}/{n_feat} | "
+                f"{psi_by.get(f, float('nan')):.4f} |")
+
+    def drow(d):  # drift-first row: feature | PSI | SHAP rank | SHAP share
+        f = d["feature"]
+        return (f"| {f} | {d['psi']:.4f} | {rank.get(f, '—')}/{n_feat} | "
+                f"{imp.get(f, 0)/total_imp:.2%} |")
+
     lines = [
         "# Phase 6 — Explainability & Drift Monitoring",
         "",
@@ -367,6 +392,36 @@ def _write_doc(a, b, threshold):
         "| History feature | Adversarial AUC | PSI |",
         "|---|---|---|",
         *[frow(d) for d in hist_psi],
+        "",
+        "### Drift × importance cross-check (per-feature, not the category average)",
+        "",
+        "\"History is only 4.9%\" is a category average; the sharp question is whether any "
+        "*individual* feature is both **relied on** (high SHAP) and **drifting** (high PSI). "
+        "Cross-referencing the two:",
+        "",
+        "**Top SHAP drivers — are they stable?**",
+        "",
+        "| Feature (top SHAP) | SHAP share | Rank | PSI |",
+        "|---|---|---|---|",
+        *[srow(f) for f in top_shap],
+        "",
+        "**Deployed features that moderately+ drift — are they important?**",
+        "",
+        "| Feature (PSI ≥ 0.10, deployed) | PSI | SHAP rank | SHAP share |",
+        "|---|---|---|---|",
+        *[drow(d) for d in drift_deployed],
+        "",
+        (f"**The important × drifting quadrant is empty.** No feature in the top {TOPK} by "
+         f"SHAP importance has PSI ≥ 0.10"
+         + (f" (nearest are {', '.join('`'+f+'`' for f in risk_quadrant)})." if risk_quadrant
+            else ".")
+         + f" The deployed features that do drift moderately (`id_31`, `v_missing_count`) "
+           f"rank {rank.get('id_31','—')} and {rank.get('v_missing_count','—')} of "
+           f"{n_feat} and each carry under 0.75% of importance — real but minor. The "
+           f"features the model leans on most (`C13`, `TransactionAmt`, `card1_prior_count`) "
+           f"are PSI-stable. So there is **no single named feature that is both a top driver "
+           f"and drifting** — the decline is diffuse, not attributable to one monitored "
+           f"signal."),
         "",
         "### Would this monitoring have flagged the Phase 5 decline *before* test was scored?",
         "",

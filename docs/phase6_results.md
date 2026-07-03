@@ -60,6 +60,32 @@ History/count features (all deployed) and their PSI — note these are mostly **
 | uid_amt_expanding_mean | 0.5029 | 0.0015 |
 | uid_amt_expanding_std | 0.5009 | 0.0021 |
 
+### Drift × importance cross-check (per-feature, not the category average)
+
+"History is only 4.9%" is a category average; the sharp question is whether any *individual* feature is both **relied on** (high SHAP) and **drifting** (high PSI). Cross-referencing the two:
+
+**Top SHAP drivers — are they stable?**
+
+| Feature (top SHAP) | SHAP share | Rank | PSI |
+|---|---|---|---|
+| C13 | 3.80% | 1/438 | 0.0027 |
+| TransactionAmt | 3.55% | 2/438 | 0.0005 |
+| C14 | 3.42% | 3/438 | 0.0027 |
+| C1 | 3.16% | 4/438 | 0.0021 |
+| C5 | 3.13% | 5/438 | 0.0032 |
+| card6 | 2.98% | 6/438 | 0.0529 |
+| card1_prior_count | 2.89% | 7/438 | 0.0242 |
+| card1 | 2.75% | 8/438 | 0.0022 |
+
+**Deployed features that moderately+ drift — are they important?**
+
+| Feature (PSI ≥ 0.10, deployed) | PSI | SHAP rank | SHAP share |
+|---|---|---|---|
+| v_missing_count | 0.1211 | 43/438 | 0.57% |
+| id_31 | 0.1028 | 33/438 | 0.73% |
+
+**The important × drifting quadrant is empty.** No feature in the top 20 by SHAP importance has PSI ≥ 0.10. The deployed features that do drift moderately (`id_31`, `v_missing_count`) rank 33 and 43 of 438 and each carry under 0.75% of importance — real but minor. The features the model leans on most (`C13`, `TransactionAmt`, `card1_prior_count`) are PSI-stable. So there is **no single named feature that is both a top driver and drifting** — the decline is diffuse, not attributable to one monitored signal.
+
 ### Would this monitoring have flagged the Phase 5 decline *before* test was scored?
 
 **Yes — but only as a coarse warning, not a precise predictor.** Two things must be held together honestly:

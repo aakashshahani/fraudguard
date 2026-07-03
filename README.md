@@ -284,10 +284,14 @@ auditable without opening any file.
   decline early?" is **yes, coarsely**: the two *significant*-PSI features
   (`D1_normalized`, `P_emaildomain_prior_count`) were both already **dropped in
   Phase 3** (a neat validation that Phase 3 removed the right features) and aren't in
-  the deployed model; the features the model *does* use are mostly PSI-stable. So the
-  overall-separability signal gives a real "the world shifted" alert, but per-feature
-  PSI on the deployed set would not have sharply predicted the −0.067 drop. Full
-  breakdown in `docs/phase6_results.md`.
+  the deployed model. A per-feature **drift × importance cross-check** makes the
+  point sharp rather than category-average: the two deployed features that *do* drift
+  moderately (`id_31`, `v_missing_count`) rank 33rd/43rd of 438 by SHAP and each carry
+  <0.75% of importance, while the top drivers (`C13`, `TransactionAmt`,
+  `card1_prior_count`) are PSI-stable — so the **"important × drifting" quadrant is
+  empty**. The overall-separability signal gives a real "the world shifted" alert, but
+  no single monitored feature would have sharply predicted the −0.067 drop; the decline
+  is diffuse. Full breakdown in `docs/phase6_results.md`.
 
 ---
 
