@@ -470,10 +470,14 @@ def test_drift_monitoring_never_references_isfraud_label():
     from src.modeling import TARGET
     from src.monitoring import _candidate_columns
 
-    cols = _candidate_columns()
+    # pass names explicitly so this runs in CI without the full parquet present
+    names = ["TransactionID", "TransactionDT", "TransactionDay", "split", TARGET,
+             "card1_prior_count", "uid_prior_count", "V1", "P_emaildomain"]
+    cols = _candidate_columns(names)
     assert TARGET not in cols
     for banned in ["TransactionID", "TransactionDT", "TransactionDay", "split", TARGET]:
         assert banned not in cols
+    assert "card1_prior_count" in cols and "V1" in cols
 
     # The loader's feature matrix likewise excludes the label (guard only, no full read).
     import inspect
@@ -499,3 +503,75 @@ def test_phase6_is_read_only_against_model_threshold_and_manifest():
 
     after = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in targets if p.exists()}
     assert before == after, "Phase 6 must be read-only against model/threshold/manifest"
+
+
+# =========================================================================== #
+# Phase 7 — training/serving skew guardrail (the critical consistency test)
+#
+# Feed each fixture transaction's RAW fields through the live serving assembly and
+# assert the internally-built feature vector matches the offline precomputed vector
+# column-for-column. This is the direct catch for training/serving skew and runs in
+# CI against the committed fixtures — no Kaggle data required.
+# =========================================================================== #
+
+from pathlib import Path  # noqa: E402
+
+_FIX = Path(__file__).resolve().parent / "fixtures"
+
+
+@pytest.mark.skipif(
+    not (_FIX / "serving_fixture.json").exists(),
+    reason="serving fixtures not built (run scripts/build_serving_artifacts.py)",
+)
+def test_serving_assembly_matches_offline_features_no_skew():
+    from src.serving.assemble import FeatureAssembler
+    from src.serving.feature_store import FeatureStore
+
+    fixtures = json.loads((_FIX / "serving_fixture.json").read_text())
+    store = FeatureStore.from_snapshot(_FIX / "feature_store_snapshot.json")
+    asm = FeatureAssembler.load(store)
+
+    for fx in fixtures:
+        got = asm.assemble(fx["raw"])
+        exp = pd.DataFrame(
+            [{k: (np.nan if v is None else v) for k, v in fx["expected_features"].items()}]
+        )[got.columns]
+        g = got.iloc[0].to_numpy(dtype="float64")
+        e = exp.iloc[0].to_numpy(dtype="float64")
+        mism = ~np.isclose(g, e, atol=1e-4, rtol=1e-4, equal_nan=True)
+        assert not mism.any(), (
+            f"training/serving SKEW on tid={fx['transaction_id']} in columns "
+            f"{list(np.array(got.columns)[mism])[:8]}"
+        )
+
+
+@pytest.mark.skipif(
+    not (_FIX / "serving_fixture.json").exists() or not WINNER_ARTIFACT.exists(),
+    reason="serving fixtures / model artifact not built",
+)
+def test_predict_endpoint_scores_and_handles_unknown_history():
+    import os
+
+    os.environ["FRAUDGUARD_STORE"] = "snapshot"  # fast, CI-consistent store
+    from fastapi.testclient import TestClient
+
+    from src.serving.api import app
+
+    fixtures = json.loads((_FIX / "serving_fixture.json").read_text())
+    with TestClient(app) as client:
+        # a known fixture transaction scores and returns a valid decision
+        r = client.post("/predict", json=fixtures[0]["raw"])
+        assert r.status_code == 200
+        body = r.json()
+        assert 0.0 <= body["fraud_probability"] <= 1.0
+        assert body["decision"] in (0, 1)
+        assert body["threshold"] == pytest.approx(0.0783, abs=1e-3)
+        assert body["uid_known"] is True
+
+        # a never-seen card1/uid must NOT crash — sentinel fallback, valid response
+        unknown = dict(fixtures[0]["raw"])
+        unknown["card1"] = 999999          # no history for this card
+        unknown["addr1"] = 123456
+        r2 = client.post("/predict", json=unknown)
+        assert r2.status_code == 200
+        assert r2.json()["uid_known"] is False
