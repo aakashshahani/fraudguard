@@ -110,7 +110,10 @@ python -m src.adversarial_validation
 # Phase 4 — model family progression + imbalance bake-off  (train+val only; W&B offline)
 python -m src.modeling
 
-# Guardrail tests (temporal split + FE + UID + adversarial + modeling leakage)
+# Phase 5 — threshold selection (val) + final test evaluation (loads Phase 4 winner)
+python -m src.evaluation
+
+# Guardrail tests (temporal split + FE + UID + adversarial + modeling + sweep)
 pytest -q
 ```
 
@@ -251,6 +254,19 @@ auditable without opening any file.
   a refuted pre-registration honestly is the point of pre-registering. Full tables
   in `docs/phase4_results.md`; the winning `xgboost + none` (seed 42) model is
   frozen in `models/phase4_winner.joblib` for Phase 5/6 to reuse, not retrain.
+- **Phase 5 — cost-based threshold, then the one-time test unseal.** The deployed
+  model's operating threshold is chosen by **minimising the pre-registered 10:1
+  cost on validation** (t≈0.078: precision 0.39, recall 0.66); a sensitivity sweep
+  (5:1→50:1) shows the threshold falling and recall rising as missed fraud gets
+  costlier — the expected direction, decision unchanged. The **Stage 1
+  RF-vs-XGBoost divergence resolved**: it existed only for the *balanced* XGBoost
+  arm; the deployed `none` model is cheaper than RF at each model's own best
+  operating point (0.1517 vs 0.1647). Then the test split was unsealed **once**:
+  **test PR-AUC 0.5266 vs validation 0.5937 (−0.067)** — a drop in the expected
+  direction, consistent with Phase 3's ~0.9995 temporal separability (test sits
+  further in the future, so history features drift more). That the gap is a
+  *decline*, not an optimistic gain, is itself evidence the evaluation wasn't
+  leaking. Full breakdown in `docs/phase5_results.md`.
 
 ---
 
@@ -260,9 +276,10 @@ auditable without opening any file.
 2. **Phase 2 — Feature engineering & encoding** ✅
    *(incl. Phase 2.5 — UID pseudo-identity aggregation)* ✅
 3. **Phase 3 — Adversarial validation & pre-registered Phase 4 protocol** ✅
-4. **Phase 4 — Baseline modeling & imbalance bake-off** ✅ *(current)*
+4. **Phase 4 — Baseline modeling & imbalance bake-off** ✅
    *(results in `docs/phase4_results.md`, winner in `models/`)*
-5. Phase 5 — Threshold selection & evaluation
+5. **Phase 5 — Threshold selection & final evaluation** ✅ *(current)*
+   *(results in `docs/phase5_results.md`; test split evaluated once)*
 6. Phase 6 — Drift simulation & monitoring
 7. Phase 7 — Serving / deployment
 
