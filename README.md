@@ -214,16 +214,21 @@ auditable without opening any file.
   feature = `TransactionDT // 86400`) is a coarse copy of the temporal index, so
   it is excluded as a *candidate* by the same rule the spec applies to
   `TransactionDT`, not "discovered" as drift — otherwise it trivially drives the
-  overall AUC to 1.0. (2) Even after dropping the flagged features, the modeling
-  set's **combined** adversarial AUC stays ~0.9995: history-accumulation features
-  (uid/card prior counts) inherently encode time on a temporal split, so
-  train/val remain almost perfectly separable *by construction*. This is expected,
-  not a bug — per-feature flagging removes the worst individual offenders; it
-  cannot erase inherent temporal separability, which is precisely why evaluation
-  uses a temporal val split (Phase 4) and drift is simulated explicitly (Phase 6).
-  The two flagged-and-dropped features (`P_emaildomain_prior_count` 0.76,
-  `D1_normalized` 0.72) were marginally over threshold; the central UID aggregates
-  and raw `D1` are **not** flagged and survive.
+  overall AUC to 1.0. (2) **The honest, precise reading of the residual:** only two
+  features flag (`P_emaildomain_prior_count` 0.76, `D1_normalized` 0.72), yet
+  dropping them barely moves the combined AUC (1.0000 → 0.9995). That means the
+  separability comes from **many features acting jointly**, not one or two bad
+  actors — which is exactly the blind spot of a per-feature *univariate* method
+  (the tradeoff we chose over full-model importance). So the correct statement is:
+  *adversarial validation caught the individually-strongest drifting features; the
+  residual separability is an **expected** property of using inherently
+  time-cumulative features (uid/card prior counts) by design — a live model sees
+  the same daily growth — and is **not** evidence the feature set generalizes
+  cleanly.* "Only 2 flagged" is **not** a clean bill of health. We deliberately do
+  not try to erase this (the growth is the feature's whole point); whether the
+  model leans on "how much history exists" as a shortcut vs. genuinely
+  fraud-indicative patterns is deferred to SHAP analysis in a later phase. The
+  central UID aggregates and raw `D1` are **not** flagged and survive.
 - **Pre-registered evaluation protocol (`docs/phase4_evaluation_protocol.md`).**
   Written and committed in Phase 3, before any Phase 4 model exists: primary
   metric (validation PR-AUC), the family-progression-then-imbalance-bake-off
