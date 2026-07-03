@@ -72,9 +72,14 @@ def load_threshold() -> float:
     return float(json.loads(PHASE5_THRESHOLD_JSON.read_text())["threshold"])
 
 
-def _candidate_columns() -> list[str]:
-    """Phase-3 candidate feature set from the parquet schema (never isFraud/DT/ID)."""
-    names = pq.ParquetFile(FEATURES_PARQUET).schema.names
+def _candidate_columns(names: list[str] | None = None) -> list[str]:
+    """
+    Phase-3 candidate feature set (never isFraud/DT/ID). ``names`` defaults to the
+    parquet schema; it can be passed explicitly so the exclusion logic is testable
+    in CI without the (gitignored) full dataset present.
+    """
+    if names is None:
+        names = pq.ParquetFile(FEATURES_PARQUET).schema.names
     excluded = set(EXCLUDED_UNCONDITIONAL) | set(EXCLUDED_STRUCTURAL)
     return [c for c in names if c not in excluded]
 
