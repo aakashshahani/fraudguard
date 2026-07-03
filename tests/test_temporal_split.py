@@ -350,3 +350,40 @@ def test_adversarial_input_is_exactly_train_plus_val_never_test():
     assert len(adv) == train_n + val_n
     assert len(adv) != train_n + val_n + test_n
     assert set(adv["split"].unique()) == {"train", "val"}  # no 'test' anywhere
+
+
+# =========================================================================== #
+# Phase 4 — modeling must use ONLY manifest columns and NEVER load test rows
+# =========================================================================== #
+
+from src.modeling import (  # noqa: E402
+    MANIFEST_JSON,
+    _read_modeling_data,
+    load_Xy,
+    manifest_features,
+)
+
+
+def test_modeling_refuses_to_load_test_split():
+    """The loader hard-fails on any request that includes the test split."""
+    with pytest.raises(ValueError):
+        _read_modeling_data(["test"])
+    with pytest.raises(ValueError):
+        _read_modeling_data(["train", "val", "test"])
+
+
+@pytest.mark.skipif(
+    not (FEATURES_PARQUET.exists() and MANIFEST_JSON.exists()),
+    reason="features.parquet / feature_manifest.json not built yet",
+)
+def test_modeling_uses_only_manifest_columns():
+    """
+    The feature matrix handed to the models is EXACTLY the manifest's
+    allowed_features — no extra columns, and never the target/split/identifiers.
+    """
+    feats = manifest_features()
+    X, _ = load_Xy("val")
+
+    assert list(X.columns) == feats
+    for banned in ["isFraud", "split", "TransactionID", "TransactionDT", "TransactionDay"]:
+        assert banned not in X.columns
