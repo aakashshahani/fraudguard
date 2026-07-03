@@ -113,7 +113,10 @@ python -m src.modeling
 # Phase 5 — threshold selection (val) + final test evaluation (loads Phase 4 winner)
 python -m src.evaluation
 
-# Guardrail tests (temporal split + FE + UID + adversarial + modeling + sweep)
+# Phase 6 — SHAP explainability + val-vs-test drift monitoring (read-only)
+python -m src.monitoring
+
+# Guardrail tests (split + FE + UID + adversarial + modeling + sweep + drift)
 pytest -q
 ```
 
@@ -270,6 +273,21 @@ auditable without opening any file.
   (direction/qualitative match, not a derived magnitude). That the gap is a
   *decline* rather than an optimistic gain is consistent with — though not proof of
   — a leak-free evaluation. Full breakdown in `docs/phase5_results.md`.
+- **Phase 6 — SHAP answers the history-shortcut question; drift monitoring is a
+  coarse warning, not a sharp predictor.** SHAP on validation shows the model is
+  **95.1% driven by transaction content, only 4.9% by history/count features** —
+  directly answering the question left open since Phase 3: it is **not** leaning on
+  "how much history exists" as a shortcut (`card1_prior_count` is the one prominent
+  history feature; the rest are minor). Drift monitoring (val-vs-test adversarial
+  AUC 0.9999, ~unchanged from train-vs-val) confirms strong, persistent
+  non-stationarity. But the honest read on "would monitoring have caught the Phase 5
+  decline early?" is **yes, coarsely**: the two *significant*-PSI features
+  (`D1_normalized`, `P_emaildomain_prior_count`) were both already **dropped in
+  Phase 3** (a neat validation that Phase 3 removed the right features) and aren't in
+  the deployed model; the features the model *does* use are mostly PSI-stable. So the
+  overall-separability signal gives a real "the world shifted" alert, but per-feature
+  PSI on the deployed set would not have sharply predicted the −0.067 drop. Full
+  breakdown in `docs/phase6_results.md`.
 
 ---
 
@@ -281,9 +299,10 @@ auditable without opening any file.
 3. **Phase 3 — Adversarial validation & pre-registered Phase 4 protocol** ✅
 4. **Phase 4 — Baseline modeling & imbalance bake-off** ✅
    *(results in `docs/phase4_results.md`, winner in `models/`)*
-5. **Phase 5 — Threshold selection & final evaluation** ✅ *(current)*
+5. **Phase 5 — Threshold selection & final evaluation** ✅
    *(results in `docs/phase5_results.md`; test split evaluated once)*
-6. Phase 6 — Drift simulation & monitoring
+6. **Phase 6 — Explainability (SHAP) & drift monitoring** ✅ *(current)*
+   *(results in `docs/phase6_results.md`)*
 7. Phase 7 — Serving / deployment
 
 > **TransactionDT note (important):** `TransactionDT` is a time delta in
