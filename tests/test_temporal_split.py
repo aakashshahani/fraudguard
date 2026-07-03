@@ -420,3 +420,34 @@ def test_smote_only_ever_sees_training_data_never_validation():
 
     assert seen == [n_tr], f"SMOTE saw {seen}, expected exactly one call with {n_tr} train rows"
     assert len(prob) == n_val  # validation was not resampled — one score per val row
+
+
+# =========================================================================== #
+# Phase 5 — the cost-minimising threshold must actually be the minimum
+# =========================================================================== #
+
+from src.evaluation import best_operating_point, cost_sweep  # noqa: E402
+
+
+def test_cost_sweep_finds_the_true_minimum_cost_threshold():
+    """
+    The selected operating point must have cost <= every achievable threshold,
+    checked against an independent brute-force sweep over all candidate cuts.
+    """
+    rng = np.random.default_rng(0)
+    y = rng.integers(0, 2, 200)
+    prob = rng.random(200)
+    fn_ratio = 10
+
+    best = best_operating_point(cost_sweep(y, prob, fn_ratio))
+
+    # brute force: predict positive at prob >= t for every candidate threshold
+    n = len(y)
+    brute = []
+    for t in np.unique(prob):
+        pred = prob >= t
+        fn = int(((~pred) & (y == 1)).sum())
+        fp = int((pred & (y == 0)).sum())
+        brute.append((fn_ratio * fn + fp) / n)
+    assert best["cost"] == pytest.approx(min(brute), abs=1e-12)
+    assert 0.0 <= best["threshold"] <= 1.0
