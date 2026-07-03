@@ -4,7 +4,10 @@
 
 # FraudGuard
 
-![CI](https://github.com/aakashshahani/fraudguard/actions/workflows/ci.yml/badge.svg)
+[![CI](https://github.com/aakashshahani/fraudguard/actions/workflows/ci.yml/badge.svg)](https://github.com/aakashshahani/fraudguard/actions/workflows/ci.yml)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Tests](https://img.shields.io/badge/tests-24%20passing-brightgreen.svg)
 
 An end-to-end machine learning system that detects fraudulent card transactions on the [IEEE-CIS Fraud Detection](https://www.kaggle.com/c/ieee-fraud-detection) dataset (590,540 transactions, 3.5% fraud). It runs the full lifecycle across seven phases: data preparation, feature engineering, adversarial validation, model selection, threshold tuning, explainability and drift monitoring, and a serving API with CI.
 
@@ -25,31 +28,42 @@ Two ideas run through the whole project. The first is leakage discipline: a frau
 
 PR-AUC (area under the precision-recall curve) is the right primary metric here because at a 3.5% fraud rate, ROC-AUC is inflated by the large legitimate class. The test score holds above a published paper baseline even after taking a real hit from temporal drift, which is discussed below.
 
+<p align="center">
+  <img src="assets/class_imbalance.png" alt="Class imbalance: 3.5% of transactions are fraud" width="68%">
+</p>
+
+## Try it (no dataset needed)
+
+The full pipeline needs the Kaggle dataset, but the serving API ships with the frozen model and a small feature-store snapshot, so it runs standalone in one command:
+
+```bash
+docker build -t fraudguard . && docker run -p 8000:8000 fraudguard
+
+curl -s localhost:8000/predict -H 'content-type: application/json' \
+  -d '{"card1": 10000, "TransactionAmt": 100.0, "TransactionDT": 15000000, "D1": 14, "addr1": 315, "ProductCD": "W"}'
+# { "fraud_probability": ..., "decision": 0, "threshold": 0.0783, "uid_known": false }
+```
+
 ## Architecture
 
-```
-IEEE-CIS raw CSVs (transaction joined with identity)
-        |
-  OFFLINE  (train and validation only, until the very last step)
-        |
-  P1   merge and downcast, then a strictly chronological 70/15/15 split
-  P2   feature engineering: encoders fit on train only, missingness signals, sentinels
-  P2.5 reconstruct a client identity (card + address + tenure), causal history features
-  P3   adversarial validation drops drifting features, freezing feature_manifest.json
-  P4   model bake-off (Logistic Regression, Random Forest, XGBoost) under a
-       pre-registered protocol, producing the frozen winner model
-  P5   cost-based threshold chosen on validation, then the test set is unsealed once
-  P6   SHAP explainability and a validation-vs-test drift monitor
-        |
-        | frozen and versioned: model, threshold, feature manifest, encoders
-        |
-  ONLINE  (P7 serving)
-        |
-  POST /predict  ->  feature store lookup  ->  persisted encoders and sentinels
-                 ->  manifest column order  ->  XGBoost + threshold
-                 ->  { probability, decision }
-  A skew test asserts the served feature vector equals the offline one, column by column.
-  Packaged with Docker and a GitHub Actions CI pipeline that runs on committed fixtures.
+```mermaid
+flowchart TB
+    subgraph offline["OFFLINE (train and validation only, until the final step)"]
+        direction LR
+        RAW["Raw CSVs<br/>transaction + identity"] --> SPLIT["P1<br/>temporal split"]
+        SPLIT --> FEAT["P2 / P2.5<br/>features + causal aggregates"]
+        FEAT --> ADV["P3<br/>adversarial validation"]
+        ADV --> MODEL["P4<br/>model bake-off"]
+        MODEL --> THRESH["P5<br/>cost threshold, test scored once"]
+        THRESH --> MON["P6<br/>SHAP + drift monitor"]
+    end
+    FEAT -. encoders .-> API
+    ADV -. feature manifest .-> API
+    MODEL -. frozen model .-> API
+    THRESH -. threshold .-> API
+    subgraph online["ONLINE (P7 serving)"]
+        API["FastAPI /predict<br/>feature store + skew guardrail"] --> RESP["probability<br/>+ decision"]
+    end
 ```
 
 ## Tech stack
@@ -120,9 +134,17 @@ The deployment threshold minimizes a pre-registered 10:1 false-negative to false
 
 The test set was then unsealed exactly once. Test PR-AUC came in at 0.527 against a validation PR-AUC of 0.594 for the same model, a decline of about 0.067. That drop is in the expected direction and is consistent with the strong temporal separability measured in Phase 3: the test period sits further in the future, so the features drift further and ranking degrades a little. A decline rather than an optimistic gain is what an honest, non-leaking evaluation should show. This result is final.
 
+<p align="center">
+  <img src="assets/threshold_cost.png" alt="Cost versus decision threshold, with the cost-minimizing point marked" width="80%">
+</p>
+
 ### P6. Explainability and drift monitoring
 
 SHAP on the validation set shows the model draws about 95% of its importance from transaction content and under 5% from history features, which answers a question left open earlier: the model is not leaning on a "how much history exists" shortcut. A validation-vs-test drift monitor reports Population Stability Index and adversarial AUC using test feature values only, never the labels. A per-feature cross-check of drift against importance confirms that the two features which drift the most were already dropped in Phase 3, and that no feature the model actually relies on is drifting, so the important-and-drifting quadrant is empty. The monitor would flag the coming decline only coarsely, as an input-distribution shift, not as a sharp per-feature prediction, and the writeup says exactly that.
+
+<p align="center">
+  <img src="assets/shap_summary.png" alt="SHAP summary: the model relies mostly on transaction-content features" width="82%">
+</p>
 
 ### P7. Serving
 
