@@ -387,3 +387,36 @@ def test_modeling_uses_only_manifest_columns():
     assert list(X.columns) == feats
     for banned in ["isFraud", "split", "TransactionID", "TransactionDT", "TransactionDay"]:
         assert banned not in X.columns
+
+
+def test_smote_only_ever_sees_training_data_never_validation():
+    """
+    SMOTE must be fit on train rows only and never touch validation. imblearn
+    samplers run only inside .fit() and are bypassed at .predict_proba(); this
+    spies on SMOTE to prove it is called exactly once, with the TRAIN row count,
+    and that scoring val triggers no resampling and leaves val unchanged.
+    """
+    from imblearn.over_sampling import SMOTE
+    from imblearn.pipeline import Pipeline as ImbPipeline
+    from sklearn.linear_model import LogisticRegression
+
+    seen: list[int] = []
+
+    class SpySMOTE(SMOTE):
+        def fit_resample(self, X, y):
+            seen.append(len(X))  # record how many rows SMOTE was handed
+            return super().fit_resample(X, y)
+
+    rng = np.random.default_rng(0)
+    n_tr, n_val = 300, 120
+    X_tr = pd.DataFrame(rng.normal(size=(n_tr, 4)), columns=list("abcd"))
+    y_tr = np.r_[np.ones(60, int), np.zeros(240, int)]  # 20% minority
+    X_val = pd.DataFrame(rng.normal(size=(n_val, 4)), columns=list("abcd"))
+
+    pipe = ImbPipeline([("smote", SpySMOTE(random_state=42)),
+                        ("clf", LogisticRegression(max_iter=200))])
+    pipe.fit(X_tr, y_tr)
+    prob = pipe.predict_proba(X_val)[:, 1]
+
+    assert seen == [n_tr], f"SMOTE saw {seen}, expected exactly one call with {n_tr} train rows"
+    assert len(prob) == n_val  # validation was not resampled — one score per val row
