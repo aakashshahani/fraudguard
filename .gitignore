@@ -3,6 +3,8 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+# Small, committed so serving + CI run without the full Kaggle dataset:
+!data/processed/feature_manifest.json
 *.parquet
 *.csv
 *.csv.zip
@@ -15,6 +17,8 @@ models/*
 !models/phase4_winner.joblib
 !models/phase4_winner.json
 !models/phase5_threshold.json
+!models/phase2_encoders.json
+!models/serving_raw_schema.json
 wandb/
 
 # ---- Kaggle credentials (never commit secrets) ----
@@ -53,5 +57,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# ---- EDA output images (regenerated, keep repo light) ----
-reports/figures/*.png
+# ---- Report figures / regenerated artifacts (keep repo light) ----
+reports/figures/*
+!reports/figures/.gitkeep
