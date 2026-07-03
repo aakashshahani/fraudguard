@@ -387,6 +387,28 @@ def _smote_hypothesis(stage2: list[dict]) -> dict:
             "classweight": cw, "smote": sm, "both": both}
 
 
+def _concordance(results: list[dict], key: str) -> str:
+    """Do the secondary metrics (cost, precision@recall) point at the PR-AUC winner?"""
+    pr = max(results, key=lambda r: r["pr_auc_mean"])
+    cheap = min(results, key=lambda r: r["cost_mean"])
+    prec = max(results, key=lambda r: r["prec_at_recall80_mean"])
+    if cheap[key] == pr[key] and prec[key] == pr[key]:
+        return (f"Secondary metrics concur: `{pr[key]}` is also lowest-cost and "
+                f"highest precision@recall0.80 — no operating-point/ranking tension here.")
+    parts = []
+    if cheap[key] != pr[key]:
+        parts.append(f"lowest cost is `{cheap[key]}` ({cheap['cost_mean']:.4f} vs "
+                     f"{pr['cost_mean']:.4f})")
+    if prec[key] != pr[key]:
+        parts.append(f"best precision@recall0.80 is `{prec[key]}` "
+                     f"({prec['prec_at_recall80_mean']:.4f} vs {pr['prec_at_recall80_mean']:.4f})")
+    return ("**Secondary-metric divergence:** the PR-AUC winner is `" + pr[key] +
+            "`, but " + " and ".join(parts) + ". PR-AUC (ranking) and the fixed-"
+            "operating-point metrics disagree here — exactly the tension Phase 5's "
+            "threshold selection exists to resolve; the pre-registered decider is "
+            "PR-AUC, so it stands.")
+
+
 def _fmt(res: dict) -> str:
     return (f"| {res['family']} | {res['condition']} | "
             f"{res['pr_auc_mean']:.4f} ± {res['pr_auc_std']:.4f} | "
@@ -422,6 +444,11 @@ def _write_results_doc(stage1, stage2, wf, s1tb, wc, s2tb, smote, spw):
         "",
         f"**Stage-1 winner: `{wf}`.** " + (s1tb if s1tb else "Highest mean PR-AUC outright."),
         "",
+        _concordance(stage1, "family"),
+        "",
+        "*(Logistic regression uses the deterministic lbfgs solver, so its three "
+        "seeds are identical — std 0.0000 is expected, not a stuck seed.)*",
+        "",
         "## Stage 2 — Imbalance-handling bake-off (`" + wf + "` only)",
         "",
         "| Family | Condition | Val PR-AUC (mean ± std) | ROC-AUC | Prec@Recall0.80 | Cost |",
@@ -429,6 +456,8 @@ def _write_results_doc(stage1, stage2, wf, s1tb, wc, s2tb, smote, spw):
         *[_fmt(r) for r in sorted(stage2, key=lambda r: -r["pr_auc_mean"])],
         "",
         f"**Stage-2 winner: `{wc}`.** " + (s2tb if s2tb else "Highest mean PR-AUC outright."),
+        "",
+        _concordance(stage2, "condition"),
         "",
         "## Reading the result",
         "",
@@ -439,9 +468,11 @@ def _write_results_doc(stage1, stage2, wf, s1tb, wc, s2tb, smote, spw):
         f"ranked at or below the unweighted model (`{wc}` won). This is coherent with "
         "the project's design: the recall benefit of imbalance handling shows up at a "
         "chosen operating point, and **operating-point / threshold selection is "
-        "deliberately Phase 5**, not baked into training here. Note the secondary "
-        "metrics (prec@recall0.80 and the cost metric) agree with the PR-AUC ordering "
-        "in this run — they are context only and did not decide.",
+        "deliberately Phase 5**, not baked into training here. Where the "
+        "fixed-operating-point secondary metrics disagree with the PR-AUC ordering "
+        "(see the concordance notes under each stage), that is the ranking-vs-"
+        "operating-point tension itself — surfaced, not smoothed over, and left for "
+        "Phase 5 to resolve. The secondary metrics are context only; they did not decide.",
         "",
         "## Pre-registered SMOTE hypothesis",
         "",

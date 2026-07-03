@@ -16,6 +16,10 @@ Executed per `docs/phase4_evaluation_protocol.md` (pre-registered). Primary metr
 
 **Stage-1 winner: `xgboost`.** Highest mean PR-AUC outright.
 
+**Secondary-metric divergence:** the PR-AUC winner is `xgboost`, but lowest cost is `rf` (0.1634 vs 0.1682) and best precision@recall0.80 is `rf` (0.1777 vs 0.1638). PR-AUC (ranking) and the fixed-operating-point metrics disagree here — exactly the tension Phase 5's threshold selection exists to resolve; the pre-registered decider is PR-AUC, so it stands.
+
+*(Logistic regression uses the deterministic lbfgs solver, so its three seeds are identical — std 0.0000 is expected, not a stuck seed.)*
+
 ## Stage 2 — Imbalance-handling bake-off (`xgboost` only)
 
 | Family | Condition | Val PR-AUC (mean ± std) | ROC-AUC | Prec@Recall0.80 | Cost |
@@ -27,9 +31,11 @@ Executed per `docs/phase4_evaluation_protocol.md` (pre-registered). Primary metr
 
 **Stage-2 winner: `none`.** Highest mean PR-AUC outright.
 
+Secondary metrics concur: `none` is also lowest-cost and highest precision@recall0.80 — no operating-point/ranking tension here.
+
 ## Reading the result
 
-PR-AUC is **threshold-independent** — it scores ranking quality across all thresholds, not performance at one operating point. Class weights and SMOTE primarily reshape the score distribution to trade precision for recall; that does not necessarily improve *ranking*, and here every handling technique ranked at or below the unweighted model (`none` won). This is coherent with the project's design: the recall benefit of imbalance handling shows up at a chosen operating point, and **operating-point / threshold selection is deliberately Phase 5**, not baked into training here. Note the secondary metrics (prec@recall0.80 and the cost metric) agree with the PR-AUC ordering in this run — they are context only and did not decide.
+PR-AUC is **threshold-independent** — it scores ranking quality across all thresholds, not performance at one operating point. Class weights and SMOTE primarily reshape the score distribution to trade precision for recall; that does not necessarily improve *ranking*, and here every handling technique ranked at or below the unweighted model (`none` won). This is coherent with the project's design: the recall benefit of imbalance handling shows up at a chosen operating point, and **operating-point / threshold selection is deliberately Phase 5**, not baked into training here. Where the fixed-operating-point secondary metrics disagree with the PR-AUC ordering (see the concordance notes under each stage), that is the ranking-vs-operating-point tension itself — surfaced, not smoothed over, and left for Phase 5 to resolve. The secondary metrics are context only; they did not decide.
 
 ## Pre-registered SMOTE hypothesis
 
