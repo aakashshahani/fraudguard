@@ -10,3 +10,6 @@ wandb
 imbalanced-learn
 joblib
 shap
+fastapi
+uvicorn
+httpx

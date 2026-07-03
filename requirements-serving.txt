@@ -1,0 +1,10 @@
+# Minimal runtime deps for the serving image (no shap/wandb/matplotlib/kaggle).
+# imbalanced-learn is required because the saved model is an imblearn Pipeline.
+pandas
+pyarrow
+scikit-learn
+xgboost
+imbalanced-learn
+joblib
+fastapi
+uvicorn
