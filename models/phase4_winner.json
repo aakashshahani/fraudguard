@@ -1,0 +1,9 @@
+{
+  "family": "xgboost",
+  "condition": "none",
+  "seed": 42,
+  "manifest_hash": "4220872f0bec8b3e",
+  "git_hash": "70495b38e48e5cae3671c63f5a95d730b48d95dd",
+  "n_features": 438,
+  "note": "Reused verbatim by Phase 5 (thresholds) and Phase 6 (SHAP); not retrained."
+}
