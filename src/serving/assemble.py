@@ -68,6 +68,14 @@ class FeatureAssembler:
                 df[c] = df[c].astype("string")           # None -> <NA>
             else:
                 num = pd.to_numeric(df[c], errors="coerce")
+                # Never narrow a value that doesn't fit: pandas wraps silently
+                # (card1=999999 as int16 becomes 16959 — a real card), which would
+                # score an unknown card with another card's encodings and history.
+                if np.dtype(dt).kind in "iu":
+                    info = np.iinfo(dt)
+                    if ((num < info.min) | (num > info.max)).any():
+                        df[c] = num
+                        continue
                 try:
                     df[c] = num.astype(dt)               # exact merged dtype (matters for
                 except (ValueError, TypeError):          # string-key encoding fidelity)

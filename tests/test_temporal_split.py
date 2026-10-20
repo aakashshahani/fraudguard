@@ -575,3 +575,24 @@ def test_predict_endpoint_scores_and_handles_unknown_history():
         r2 = client.post("/predict", json=unknown)
         assert r2.status_code == 200
         assert r2.json()["uid_known"] is False
+
+
+@pytest.mark.skipif(
+    not (_FIX / "serving_fixture.json").exists(),
+    reason="serving fixtures not built (run scripts/build_serving_artifacts.py)",
+)
+def test_out_of_range_card_is_unknown_not_wrapped_onto_another_card():
+    """card1 is int16 in the raw schema; 999999 must not silently wrap to 16959
+    (a real card with its own frequency encoding and history)."""
+    from src.serving.assemble import FeatureAssembler
+    from src.serving.feature_store import FeatureStore
+
+    fixtures = json.loads((_FIX / "serving_fixture.json").read_text())
+    store = FeatureStore.from_snapshot(_FIX / "feature_store_snapshot.json")
+    asm = FeatureAssembler.load(store)
+
+    raw = dict(fixtures[0]["raw"], card1=999999)
+    wrapped = dict(fixtures[0]["raw"], card1=16959)
+    got = asm.assemble(raw)
+    assert got["card1"].iloc[0] == 0            # unknown frequency, not card 16959's
+    assert asm.assemble(wrapped)["card1"].iloc[0] != 0
