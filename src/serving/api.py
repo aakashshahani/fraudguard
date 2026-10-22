@@ -25,7 +25,7 @@ from typing import Any
 
 import joblib
 from fastapi import FastAPI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.data_prep import MERGED_PARQUET
 from src.evaluation import PHASE5_THRESHOLD_JSON
@@ -73,6 +73,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="FraudGuard", version="1.0", lifespan=lifespan)
 
 
+class Transaction(BaseModel):
+    """A raw transaction. Only the fields every score depends on are required;
+    any other raw IEEE-CIS field (D1, addr1, V*, id_* …) may be sent as-is and
+    missing ones are treated as missing, exactly as in training."""
+
+    model_config = ConfigDict(extra="allow")
+
+    TransactionDT: int = Field(..., ge=0, description="Seconds from the dataset's reference time")
+    TransactionAmt: float = Field(..., ge=0, description="Amount in USD")
+    card1: int = Field(..., description="Card identifier")
+
+
 class PredictResponse(BaseModel):
     fraud_probability: float = Field(..., ge=0, le=1)
     decision: int = Field(..., description="1 = block (fraud), 0 = allow")
@@ -86,12 +98,15 @@ def health() -> dict:
 
 
 @app.post("/predict", response_model=PredictResponse)
-def predict(transaction: dict) -> PredictResponse:
+def predict(transaction: Transaction) -> PredictResponse:
+    # Missing TransactionDT/TransactionAmt/card1 used to crash feature assembly
+    # with a 500; the model above turns that into a clear 422.
+    raw = transaction.model_dump()
     asm: FeatureAssembler = STATE["assembler"]
-    vector = asm.assemble(transaction)
+    vector = asm.assemble(raw)
     prob = float(STATE["model"].predict_proba(vector)[:, 1][0])
     thr = STATE["threshold"]
-    uid = asm.uid_for(transaction)
+    uid = asm.uid_for(raw)
     return PredictResponse(
         fraud_probability=prob,
         decision=int(prob >= thr),

@@ -596,3 +596,28 @@ def test_out_of_range_card_is_unknown_not_wrapped_onto_another_card():
     got = asm.assemble(raw)
     assert got["card1"].iloc[0] == 0            # unknown frequency, not card 16959's
     assert asm.assemble(wrapped)["card1"].iloc[0] != 0
+
+
+@pytest.mark.skipif(
+    not (_FIX / "serving_fixture.json").exists() or not WINNER_ARTIFACT.exists(),
+    reason="serving fixtures / model artifact not built",
+)
+def test_predict_rejects_missing_required_fields_with_422_not_500():
+    import os
+
+    os.environ["FRAUDGUARD_STORE"] = "snapshot"
+    from fastapi.testclient import TestClient
+
+    from src.serving.api import app
+
+    fixtures = json.loads((_FIX / "serving_fixture.json").read_text())
+    with TestClient(app) as client:
+        for field in ("TransactionDT", "TransactionAmt", "card1"):
+            bad = {k: v for k, v in fixtures[0]["raw"].items() if k != field}
+            r = client.post("/predict", json=bad)
+            assert r.status_code == 422, (field, r.status_code)
+        # the README's minimal example still scores
+        r = client.post("/predict", json={"card1": 10000, "TransactionAmt": 100.0,
+                                          "TransactionDT": 15000000, "D1": 14,
+                                          "addr1": 315, "ProductCD": "W"})
+        assert r.status_code == 200
