@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -29,7 +28,7 @@ from src.feature_engineering import (
     apply_frequency,
     apply_label,
 )
-from src.modeling import MANIFEST_JSON, MODELS_DIR, manifest_features
+from src.modeling import MODELS_DIR, manifest_features
 from src.serving.feature_store import FeatureStore
 from src.uid_features import build_uid
 
@@ -84,6 +83,12 @@ class FeatureAssembler:
 
     # ---- the assembly ---------------------------------------------------- #
     def assemble(self, raw: dict) -> pd.DataFrame:
+        return self.assemble_with_uid(raw)[0]
+
+    def assemble_with_uid(self, raw: dict) -> tuple[pd.DataFrame, str]:
+        """The model vector plus the reconstructed uid, from ONE pass over the
+        raw frame (serving needs both; typing ~440 columns twice per request
+        was pure overhead)."""
         df = self._raw_frame(raw)
 
         # 1-3. engineered features computed from RAW (before card1 is encoded),
@@ -117,7 +122,7 @@ class FeatureAssembler:
         missing = [c for c in self.manifest if c not in df.columns]
         if missing:
             raise RuntimeError(f"Assembled frame missing manifest columns: {missing[:5]}")
-        return df[self.manifest]
+        return df[self.manifest], uid
 
     def uid_for(self, raw: dict) -> str:
         """Expose the reconstructed uid (handy for diagnostics / unknown-key checks)."""

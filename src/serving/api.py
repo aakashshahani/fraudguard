@@ -103,10 +103,9 @@ def predict(transaction: Transaction) -> PredictResponse:
     # with a 500; the model above turns that into a clear 422.
     raw = transaction.model_dump()
     asm: FeatureAssembler = STATE["assembler"]
-    vector = asm.assemble(raw)
+    vector, uid = asm.assemble_with_uid(raw)
     prob = float(STATE["model"].predict_proba(vector)[:, 1][0])
     thr = STATE["threshold"]
-    uid = asm.uid_for(raw)
     return PredictResponse(
         fraud_probability=prob,
         decision=int(prob >= thr),
