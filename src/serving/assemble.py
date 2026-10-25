@@ -2,8 +2,8 @@
 FraudGuard — Phase 7 Part B core: raw transaction -> model feature vector.
 
 This is where training/serving skew would live, so it reuses Phase 2/2.5's EXACT
-functions (persisted encoders, the same missingness/sentinel logic, the same uid
-construction) and assembles the vector in ``feature_manifest.json``'s exact column
+artifacts and rules (persisted encoders keyed the same way as apply_frequency /
+apply_label, the same missingness/sentinel logic, the same uid construction) and assembles the vector in ``feature_manifest.json``'s exact column
 order. The Part C consistency test asserts this reproduces the offline
 ``features.parquet`` vector column-for-column.
 
@@ -24,9 +24,9 @@ import numpy as np
 import pandas as pd
 
 from src.feature_engineering import (
+    MISSING_TOKEN,
+    UNKNOWN_LABEL,
     V_FILL_SENTINEL,
-    apply_frequency,
-    apply_label,
 )
 from src.modeling import MODELS_DIR, manifest_features
 from src.serving.feature_store import FeatureStore
@@ -61,25 +61,32 @@ class FeatureAssembler:
 
     # ---- raw dict -> typed 1-row frame ----------------------------------- #
     def _raw_frame(self, raw: dict) -> pd.DataFrame:
-        df = pd.DataFrame([{c: raw.get(c, None) for c in self.raw_schema}])
-        for c, dt in self.raw_schema.items():
-            if dt in ("str", "string", "object"):
-                df[c] = df[c].astype("string")           # None -> <NA>
-            else:
-                num = pd.to_numeric(df[c], errors="coerce")
-                # Never narrow a value that doesn't fit: pandas wraps silently
-                # (card1=999999 as int16 becomes 16959 — a real card), which would
-                # score an unknown card with another card's encodings and history.
-                if np.dtype(dt).kind in "iu":
-                    info = np.iinfo(dt)
-                    if ((num < info.min) | (num > info.max)).any():
-                        df[c] = num
-                        continue
-                try:
-                    df[c] = num.astype(dt)               # exact merged dtype (matters for
-                except (ValueError, TypeError):          # string-key encoding fidelity)
-                    df[c] = num
-        return df
+        # Coerce every numeric field in ONE vectorized call (and every string
+        # field in another), then build the frame once. Converting ~440 one-row
+        # columns individually dominated per-request latency.
+        str_cols = [c for c, dt in self.raw_schema.items() if dt in ("str", "string", "object")]
+        num_cols = [c for c in self.raw_schema if c not in set(str_cols)]
+        strs = pd.Series([raw.get(c) for c in str_cols], dtype=object).astype("string")  # None -> <NA>
+        nums = pd.to_numeric(pd.Series([raw.get(c) for c in num_cols], dtype=object),
+                             errors="coerce").astype("float64").to_numpy()
+
+        columns: dict[str, object] = {}
+        for c, v in zip(str_cols, strs):
+            columns[c] = pd.array([v], dtype="string")
+        for c, x in zip(num_cols, nums):
+            dt = np.dtype(self.raw_schema[c])
+            if dt.kind in "iu":
+                info = np.iinfo(dt)
+                # Missing values can't be ints, and an out-of-range value must
+                # never be narrowed: pandas wraps silently (card1=999999 as int16
+                # becomes 16959 — a real card), which would score an unknown card
+                # with another card's encodings and history. Keep both as float.
+                if np.isnan(x) or not (info.min <= x <= info.max):
+                    columns[c] = np.array([x], dtype="float64")
+                    continue
+            columns[c] = np.array([x], dtype=dt)   # exact merged dtype (matters for
+                                                   # string-key encoding fidelity)
+        return pd.DataFrame(columns)[list(self.raw_schema)]
 
     # ---- the assembly ---------------------------------------------------- #
     def assemble(self, raw: dict) -> pd.DataFrame:
@@ -107,18 +114,23 @@ class FeatureAssembler:
             "card1_prior_count": np.int64(self.store.lookup_card1(df["card1"].iloc[0])),
         })
 
-        # 4. categorical encoding (persisted maps — NEVER refit here)
-        for col, fmap in self.freq.items():
-            if col in df.columns:
-                df[col] = apply_frequency(df[col], fmap)
-        for col, lmap in self.label.items():
-            if col in df.columns:
-                df[col] = apply_label(df[col], lmap)
+        # 4. categorical encoding (persisted maps — NEVER refit here). Same keys as
+        #    apply_frequency/apply_label (_as_cat: astype("string"), NaN -> token),
+        #    computed for every encoded column in one call and looked up in the
+        #    dicts directly; a per-column Series.map was most of the request time.
+        enc_cols = [c for c in (*self.freq, *self.label) if c in df.columns]
+        keys = df[enc_cols].astype("string").fillna(MISSING_TOKEN).iloc[0]
+        encoded = {c: np.array([self.freq[c].get(keys[c], 0)], dtype="int64")
+                   for c in self.freq if c in df.columns}
+        encoded.update({c: np.array([self.label[c].get(keys[c], UNKNOWN_LABEL)], dtype="int64")
+                        for c in self.label if c in df.columns})
 
         # 5. V-column sentinel (after v_missing_count already counted)
-        df[self._v_cols] = df[self._v_cols].fillna(V_FILL_SENTINEL)
+        filled = df[self._v_cols].fillna(V_FILL_SENTINEL)
 
-        df = pd.concat([df.reset_index(drop=True), eng], axis=1)
+        rest = [c for c in df.columns if c not in encoded and c not in set(self._v_cols)]
+        df = pd.concat([df[rest].reset_index(drop=True), pd.DataFrame(encoded),
+                        filled.reset_index(drop=True), eng], axis=1)
         missing = [c for c in self.manifest if c not in df.columns]
         if missing:
             raise RuntimeError(f"Assembled frame missing manifest columns: {missing[:5]}")
