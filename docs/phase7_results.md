@@ -44,15 +44,15 @@ Measured **sequentially** (one request at a time — the number that matters for
 checkout budget; a high-concurrency in-process figure would just measure GIL
 contention, not deployment latency):
 
-| Metric | Value |
-|---|---|
-| End-to-end p50 | **343 ms** |
-| End-to-end p99 | **449 ms** |
-| — of which **assemble** p50 | **210 ms** |
-| — of which **model** p50 | **22 ms** |
-| Single-worker throughput | ~2.8 rps |
+| Metric | First build | After the assembly fix |
+|---|---|---|
+| End-to-end p50 | **343 ms** | **66 ms** |
+| End-to-end p99 | **449 ms** | **80 ms** |
+| — of which **assemble** p50 | **210 ms** | **35 ms** |
+| — of which **model** p50 | **22 ms** | **29 ms** |
+| Single-worker throughput | ~2.8 rps | ~14.9 rps |
 
-**Read honestly: this does not currently fit a real-time checkout budget.** A
+**Read honestly: the first build did not fit a real-time checkout budget.** A
 synchronous fraud check in a checkout flow typically has a **~50–100 ms p99** budget
 (it's one hop among many). At 449 ms p99 we are ~5–9× over.
 
@@ -73,8 +73,14 @@ But the breakdown says exactly where the cost is and that it's cheaply fixable:
   sequential latency; scale out with multiple uvicorn workers / replicas (the app is
   stateless; the feature store is the shared tier).
 
-This is left as a documented, scoped optimisation rather than silently shipping a
-misleading "it's fast" number — consistent with the project's honesty discipline.
+**Follow-up (shipped):** the assembly now types every raw field in one vectorized
+pass, encodes categoricals with direct dict lookups keyed exactly like
+`apply_frequency` / `apply_label`, and builds the frame once — and the uid is
+computed in the same pass instead of a second one. p99 fell from 449 ms to 80 ms,
+inside the budget. The Part C skew test still passes column-for-column, so the
+speed-up changed no feature value. (It landed above the <10 ms assemble target
+because the remaining frame work is still pandas; a pure-numpy vector would be
+the next step if the budget tightens.)
 Plot + raw numbers: `reports/figures/phase7_latency.{png,json}`.
 
 ## Part E — Docker + CI
