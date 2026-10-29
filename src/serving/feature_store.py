@@ -2,9 +2,11 @@
 FraudGuard — Phase 7 Part A: in-memory feature store.
 
 Simulates the "current production state" a real feature store (Feast/Tecton +
-Redis) would maintain live: for each ``card1`` and each ``uid``, the LATEST known
-expanding-aggregate state as of the dataset's final timestamp. At serving time a
-new transaction looks up its key's current state rather than recomputing history.
+Redis) would maintain live: for each ``card1`` and each ``uid``, the aggregate
+state a NEW transaction arriving after the dataset's final timestamp should see —
+i.e. over ALL of that key's history, since every stored row is strictly earlier.
+At serving time a new transaction looks up its key's state rather than
+recomputing history.
 
 Two constructors:
 - ``from_parquet`` — production build over the full engineered dataset (needs the
@@ -46,29 +48,34 @@ class FeatureStore:
     # ---- constructors ---------------------------------------------------- #
     @classmethod
     def from_parquet(cls, features_parquet: Path, merged_parquet: Path) -> "FeatureStore":
-        """Production build: latest state per key over the full engineered dataset."""
-        feats = pd.read_parquet(
-            features_parquet,
-            columns=["TransactionID", "TransactionDT", "D1_normalized",
-                     "card1_prior_count", *UID_AGG_COLS],
-        )
-        raw = pd.read_parquet(merged_parquet, columns=["TransactionID", "card1", "addr1"])
+        """Production build over the full engineered dataset."""
+        feats = pd.read_parquet(features_parquet, columns=["TransactionID", "D1_normalized"])
+        raw = pd.read_parquet(merged_parquet,
+                              columns=["TransactionID", "card1", "addr1", "TransactionAmt"])
         df = feats.merge(raw, on="TransactionID", how="left")
         df["uid"] = build_uid(df["card1"], df["addr1"], df["D1_normalized"])
         return cls._build(df)
 
     @classmethod
     def _build(cls, df: pd.DataFrame) -> "FeatureStore":
-        df = df.sort_values("TransactionDT")
-        uid_latest = df.groupby("uid", sort=False).tail(1)
+        """State for a transaction after the end of ``df``: every row is strictly
+        earlier, so priors = the key's full history. (Copying the last row's
+        stored features would be off by one — those exclude that row itself — so
+        a client with one past transaction would look like it had none.)"""
+        amt = df["TransactionAmt"].astype("float64")
+        g = amt.groupby(df["uid"], sort=False)
+        stats = pd.DataFrame({"n": g.size(), "avg": g.mean(), "sd": g.std(ddof=1)})
         uid_state = {
-            row.uid: {k: (int(getattr(row, k)) if k == "uid_prior_count"
-                          else float(getattr(row, k))) for k in UID_AGG_COLS}
-            for row in uid_latest.itertuples()
+            r.Index: {
+                "uid_prior_count": int(r.n),
+                "uid_amt_expanding_mean": float(r.avg),
+                # sample std is undefined below two observations -> Phase 2.5 sentinel
+                "uid_amt_expanding_std": float(r.sd) if r.n >= 2 else float(UID_SENTINEL),
+            }
+            for r in stats.itertuples()
         }
-        card1_latest = df.groupby("card1", sort=False).tail(1)
-        card1_state = {str(row.card1): int(row.card1_prior_count)
-                       for row in card1_latest.itertuples()}
+        card1_state = {str(int(k)): int(v)
+                       for k, v in df.groupby("card1", sort=False).size().items()}
         return cls(uid_state, card1_state)
 
     @classmethod

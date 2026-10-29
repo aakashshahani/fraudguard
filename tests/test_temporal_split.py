@@ -621,3 +621,25 @@ def test_predict_rejects_missing_required_fields_with_422_not_500():
                                           "TransactionDT": 15000000, "D1": 14,
                                           "addr1": 315, "ProductCD": "W"})
         assert r.status_code == 200
+
+
+def test_feature_store_state_counts_the_latest_transaction_for_new_requests():
+    """A transaction arriving after the data must see the key's FULL history:
+    the latest row's own stored features exclude that row (off by one)."""
+    from src.serving.feature_store import FeatureStore
+    from src.uid_features import UID_SENTINEL
+
+    df = pd.DataFrame({
+        "uid": ["a", "a", "b"],
+        "card1": [1, 1, 2],
+        "TransactionAmt": [10.0, 20.0, 5.0],
+    })
+    store = FeatureStore._build(df)
+    a = store.lookup_uid("a")
+    assert a["uid_prior_count"] == 2
+    assert a["uid_amt_expanding_mean"] == pytest.approx(15.0)
+    assert a["uid_amt_expanding_std"] == pytest.approx(np.std([10.0, 20.0], ddof=1))
+    b = store.lookup_uid("b")
+    assert b["uid_prior_count"] == 1 and b["uid_amt_expanding_mean"] == pytest.approx(5.0)
+    assert b["uid_amt_expanding_std"] == UID_SENTINEL
+    assert store.lookup_card1(1) == 2 and store.lookup_card1(2) == 1
