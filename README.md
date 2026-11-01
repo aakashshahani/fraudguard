@@ -7,7 +7,7 @@
 [![CI](https://github.com/aakashshahani/fraudguard/actions/workflows/ci.yml/badge.svg)](https://github.com/aakashshahani/fraudguard/actions/workflows/ci.yml)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Tests](https://img.shields.io/badge/tests-24%20passing-brightgreen.svg)
+![Tests](https://img.shields.io/badge/tests-26%20passing-brightgreen.svg)
 
 An end-to-end machine learning system that detects fraudulent card transactions on the [IEEE-CIS Fraud Detection](https://www.kaggle.com/c/ieee-fraud-detection) dataset (590,540 transactions, 3.5% fraud). It runs the full lifecycle across seven phases: data preparation, feature engineering, adversarial validation, model selection, threshold tuning, explainability and drift monitoring, and a serving API with CI.
 
@@ -24,7 +24,7 @@ Two ideas run through the whole project. The first is leakage discipline: a frau
 | Validation PR-AUC (used for model selection) | 0.594 |
 | Operating point at the chosen threshold | precision 0.39, recall 0.66 |
 | Features kept after adversarial validation | 438 |
-| Automated guardrail tests, green in CI without the dataset | 24 |
+| Automated guardrail tests, green in CI without the dataset | 26 |
 
 PR-AUC (area under the precision-recall curve) is the right primary metric here because at a 3.5% fraud rate, ROC-AUC is inflated by the large legitimate class. The test score holds above a published paper baseline even after taking a real hit from temporal drift, which is discussed below.
 
